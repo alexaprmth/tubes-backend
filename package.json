@@ -1,0 +1,12 @@
+{
+  "name": "transrent-system",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "test": "npm --prefix backend test",
+    "dev:backend": "npm --prefix backend run dev",
+    "start:backend": "npm --prefix backend run start"
+  }
+}
