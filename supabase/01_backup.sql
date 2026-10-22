@@ -1,0 +1,26 @@
+-- OWNER RUNS ONCE, before 010/011. Restricted in-database snapshot, not off-site DR.
+begin;
+create schema transrent_backup_20261014;
+revoke all on schema transrent_backup_20261014 from public,anon,authenticated,service_role;
+lock table public.reservations,public.payments,public.rentals,public.vehicles,public.inspections,public.inspection_items,public.inspection_photos,public.fines,public.fine_disputes,public.refunds,public.maintenances,public.rental_company_agreements in share mode;
+create table transrent_backup_20261014.reservations as table public.reservations;
+create table transrent_backup_20261014.payments as table public.payments;
+create table transrent_backup_20261014.rentals as table public.rentals;
+create table transrent_backup_20261014.vehicles as table public.vehicles;
+create table transrent_backup_20261014.inspections as table public.inspections;
+create table transrent_backup_20261014.inspection_items as table public.inspection_items;
+create table transrent_backup_20261014.inspection_photos as table public.inspection_photos;
+create table transrent_backup_20261014.fines as table public.fines;
+create table transrent_backup_20261014.fine_disputes as table public.fine_disputes;
+create table transrent_backup_20261014.refunds as table public.refunds;
+create table transrent_backup_20261014.maintenances as table public.maintenances;
+create table transrent_backup_20261014.rental_company_agreements as table public.rental_company_agreements;
+create table transrent_backup_20261014.constraints as select conrelid::regclass::text as target,conname,pg_get_constraintdef(oid) as definition from pg_constraint where connamespace='public'::regnamespace;
+create table transrent_backup_20261014.indexes as select * from pg_indexes where schemaname='public';
+create table transrent_backup_20261014.policies as select * from pg_policies where schemaname='public';
+create table transrent_backup_20261014.columns as select * from information_schema.columns where table_schema='public';
+create table transrent_backup_20261014.grants as select * from information_schema.role_table_grants where table_schema='public';
+create table transrent_backup_20261014.functions as select p.oid::regprocedure::text as signature,pg_get_functiondef(p.oid) as definition,p.proacl::text as acl from pg_proc p where p.pronamespace='public'::regnamespace and p.prokind='f';
+revoke all on all tables in schema transrent_backup_20261014 from public,anon,authenticated,service_role;
+commit;
+select 'Backup stored in restricted schema transrent_backup_20261014' as result;

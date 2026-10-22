@@ -1,3 +1,4 @@
+import '../testing-env.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { constants, haversineKm, rentalDays } from './store.js';

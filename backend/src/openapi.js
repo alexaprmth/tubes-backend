@@ -140,6 +140,21 @@ export const createOpenapiSpec = (serverUrl = 'http://localhost:4100') => ({
     }
   },
   paths: {
+"/api/auth/refresh": {"post": {"tags": ["Authentication"], "summary": "Rotasi sesi dengan refreshToken", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}, "example": {"refreshToken": "<refresh token>"}}}}}},
+"/api/auth/accept-invite": {"post": {"tags": ["Authentication"], "summary": "Tetapkan password Admin Rental dari callback invite/recovery", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}, "example": {"reference": "INTERNAL-REF-001", "notes": "Diperiksa admin"}}}}}},
+"/api/admin/invitations": {"get": {"tags": ["Admin"], "summary": "Status dan kegagalan undangan; Admin Pusat", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}]}},
+"/api/payment-orders": {"get": {"tags": ["Reservations & Payments"], "summary": "Invoice dan receipt sesuai pemilik/perusahaan", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}]}},
+"/api/reservations/{id}/checkout": {"post": {"tags": ["Reservations & Payments"], "summary": "Buat/reuse invoice reservasi dengan nominal server", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}, "example": {"reference": "INTERNAL-REF-001", "notes": "Diperiksa admin"}}}}}},
+"/api/rentals/{id}/fine-checkout": {"post": {"tags": ["Inspection, Fine & Refund"], "summary": "Buat/reuse invoice pelunasan selisih denda", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}, "example": {"reference": "INTERNAL-REF-001", "notes": "Diperiksa admin"}}}}}},
+"/api/rentals/{id}/refund/paid": {"post": {"tags": ["Inspection, Fine & Refund"], "summary": "Admin mencatat payout deposit dengan reference; baru menutup rental", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}, "example": {"reference": "INTERNAL-REF-001", "notes": "Diperiksa admin"}}}}}},
+"/api/admin/master": {"get": {"tags": ["Admin"], "summary": "Master cabang, perangkat GPS, kendaraan sesuai lingkup admin", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}]}},
+"/api/admin/master/{entity}": {"post": {"tags": ["Admin"], "summary": "Tambah branches/devices/vehicles tanpa kewajiban foto", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}], "parameters": [{"name": "entity", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}, "example": {"reference": "INTERNAL-REF-001", "notes": "Diperiksa admin"}}}}}},
+"/api/admin/master/{entity}/{id}": {"patch": {"tags": ["Admin"], "summary": "Ubah master; kendaraan dengan booking aktif terkunci", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}], "parameters": [{"name": "entity", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}, "example": {"reference": "INTERNAL-REF-001", "notes": "Diperiksa admin"}}}}}},
+"/api/payment-orders/{id}/declare": {"post": {"tags": ["Reservations & Payments"], "summary": "Customer menyatakan pembayaran dengan reference", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}, "example": {"reference": "INTERNAL-REF-001", "notes": "Diperiksa admin"}}}}}},
+"/api/payment-orders/{id}/approve": {"post": {"tags": ["Reservations & Payments"], "summary": "Admin menyetujui DECLARED; PAID dan reservasi atomik", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}, "example": {"reference": "INTERNAL-REF-001", "notes": "Diperiksa admin"}}}}}},
+"/api/payment-orders/{id}/reject": {"post": {"tags": ["Reservations & Payments"], "summary": "Admin menolak DECLARED dengan notes", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}, "example": {"reference": "INTERNAL-REF-001", "notes": "Diperiksa admin"}}}}}},
+"/api/payment-orders/{id}/refund": {"post": {"tags": ["Reservations & Payments"], "summary": "Admin mencatat payout pembatalan dengan reference", "responses": {"200": {"description": "Berhasil"}, "400": {"description": "Input tidak valid"}, "403": {"description": "Lingkup/peran ditolak"}, "409": {"description": "Status atau nominal tidak sesuai"}, "503": {"description": "Database belum migration 015 dan 016"}}, "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": false, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}, "example": {"reference": "INTERNAL-REF-001", "notes": "Diperiksa admin"}}}}}},
+
     '/api/health': {
       get: {
         tags: ['Health'],
@@ -225,6 +240,20 @@ export const createOpenapiSpec = (serverUrl = 'http://localhost:4100') => ({
         responses: { 200: jsonResponse('Pembayaran simulasi berhasil'), 409: errorResponse('Reservasi tidak dapat dibayar') }
       }
     },
+    '/api/reservations/{id}/cancel': {
+      post: { ...authOperation({ tags: ['Reservations & Payments'], summary: 'Pembatalan sebelum handover dan refund penuh akademik', parameters: [idParameter] }),
+        requestBody: jsonRequest({ type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1, maxLength: 2000 } } }),
+        responses: { 200: jsonResponse('Reservasi CANCELLED dan bukti refund simulasi; retry tidak menggandakan refund'), 403: errorResponse('Hanya pemilik/admin perusahaan'), 409: errorResponse('Sudah handover atau provider riil') } }
+    },
+    '/api/disputes/{id}/resolve': {
+      post: { ...authOperation({ tags: ['Inspection, Fine & Refund'], summary: 'Keputusan final sengketa oleh admin perusahaan/pusat', parameters: [idParameter] }),
+        requestBody: jsonRequest({ type: 'object', required: ['decision','notes'], properties: { decision: { type: 'string', enum: ['ACCEPTED','REJECTED','ADJUSTED'] }, notes: { type: 'string', minLength: 1, maxLength: 2000 }, amount: { type: 'integer', minimum: 0, description: 'Wajib untuk ADJUSTED; tidak melebihi denda awal' } } }),
+        responses: { 200: jsonResponse('Keputusan tersimpan, refund dihitung ulang; kondisi fisik tetap'), 403: errorResponse('Bukan admin perusahaan/pusat'), 409: errorResponse('Keputusan final sudah tercatat') } }
+    },
+    '/api/rentals/{id}/fine-payments/simulate': {
+      post: { ...authOperation({ tags: ['Inspection, Fine & Refund'], summary: 'Customer melunasi seluruh selisih denda setelah deposit; nominal dihitung server', parameters: [idParameter] }),
+        responses: { 200: jsonResponse('Pembayaran akademik idempotent; denda final tidak dapat disengketa ulang'), 403: errorResponse('Bukan customer pemilik'), 409: errorResponse('Masih sengketa atau tidak ada selisih') } }
+    },
     '/api/reservations/{id}/handover': {
       post: {
         ...authOperation({ tags: ['Rental Operations'], summary: 'Handover dan inspeksi BEFORE', parameters: [idParameter] }),
@@ -278,9 +307,9 @@ export const createOpenapiSpec = (serverUrl = 'http://localhost:4100') => ({
           {
             name: 'x-gps-token',
             in: 'header',
-            required: false,
+            required: true,
             schema: { type: 'string' },
-            description: 'Wajib jika GPS_INGEST_TOKEN diaktifkan di backend.'
+            description: 'Wajib; token server minimal 32 karakter. Tanpa konfigurasi endpoint 503.'
           }
         ],
         requestBody: jsonRequest({ $ref: '#/components/schemas/LocationRequest' }),
@@ -370,19 +399,9 @@ export const createOpenapiSpec = (serverUrl = 'http://localhost:4100') => ({
     },
     '/api/admin/companies/{id}/agreements': {
       post: {
-        ...authOperation({ tags: ['Admin'], summary: 'Membuat MoU GPS perusahaan rental', parameters: [idParameter] }),
-        requestBody: jsonRequest({
-          type: 'object',
-          properties: {
-            status: { type: 'string', enum: ['DRAFT', 'PENDING', 'ACTIVE', 'EXPIRED', 'REVOKED'] },
-            signedAt: { type: 'string', format: 'date-time' },
-            expiresAt: { type: 'string', format: 'date-time' },
-            documentDataUrl: { type: 'string' },
-            notes: { type: 'string' }
-          },
-          description: 'agreementNumber dibuat otomatis oleh backend dengan format MOU-GPS-YYYY-NNNNNN.'
-        }),
-        responses: { 201: jsonResponse('Agreement GPS dibuat'), 403: errorResponse('Hanya Admin Pusat') }
+        ...authOperation({ tags: ['Admin'], summary: 'Mengirim permintaan MoU kepada pemilik rental', parameters: [idParameter] }),
+        requestBody: jsonRequest({ type: 'object', additionalProperties: false, properties: { notes: { type: 'string', maxLength: 2000 } }, description: 'Mengirim permintaan PENDING ke menu MoU pemilik perusahaan. Nomor otomatis; dokumen/tanggal final dilengkapi pemilik.' }),
+        responses: { 201: jsonResponse('Permintaan MoU dikirim'), 403: errorResponse('Hanya Admin Pusat') }
       }
     },
     '/api/admin/gps-agreements/{id}': {
@@ -421,6 +440,27 @@ export const createOpenapiSpec = (serverUrl = 'http://localhost:4100') => ({
         ...authOperation({ tags: ['Maintenance'], summary: 'Menyelesaikan maintenance', parameters: [idParameter] }),
         responses: { 200: jsonResponse('Maintenance selesai'), 409: errorResponse('Status maintenance tidak valid') }
       }
+    },
+    '/api/mou/online-terms': {
+      get: { ...authOperation({ tags: ['MoU'], summary: 'Ketentuan popup simulasi akademik dan hash versi' }), responses: { 200: jsonResponse('Versi, hash, clauses dan checks'), 403: errorResponse('Role tidak diizinkan') } }
+    },
+    '/api/rental/gps-agreements/{id}/online-simulation': {
+      post: { ...authOperation({ tags: ['MoU'], summary: 'Catat persetujuan dan buat PDF simulasi akademik', parameters: [idParameter] }), requestBody: jsonRequest({ type: 'object', required: ['termsVersion', 'termsHash', 'consents', 'includeSimulatedMeterai', 'expiresAt'], properties: { termsVersion: { type: 'string' }, termsHash: { type: 'string' }, consents: { type: 'object', required: ['terms', 'authority', 'privacy', 'simulation'], properties: Object.fromEntries(['terms', 'authority', 'privacy', 'simulation'].map((key) => [key, { type: 'boolean', enum: [true] }])) }, includeSimulatedMeterai: { type: 'boolean', enum: [true] }, expiresAt: { type: 'string', format: 'date' } } }), responses: { 201: jsonResponse('Receipt simulasi tersimpan, dokumen resmi tidak berubah'), 400: errorResponse('Persetujuan tidak lengkap'), 403: errorResponse('Bukan pemilik perusahaan'), 409: errorResponse('Versi stale, status tidak sesuai, atau simulasi sudah dibuat'), 503: errorResponse('Migration 012 diperlukan') } }
+    },
+    '/api/gps-agreements/{id}/online-simulation/document': {
+      get: { ...authOperation({ tags: ['MoU'], summary: 'Download PDF simulasi privat', parameters: [idParameter] }), responses: { 200: { description: 'PDF simulasi akademik', content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } } }, 403: errorResponse('Akses tidak diizinkan'), 404: errorResponse('Simulasi belum dibuat') } }
+    },
+    '/api/rental/gps-agreements': {
+      get: { ...authOperation({ tags: ['MoU'], summary: 'MoU milik perusahaan Admin Rental' }), responses: { 200: jsonResponse('Daftar MoU'), 403: errorResponse('Role tidak diizinkan') } }
+    },
+    '/api/rental/gps-agreements/{id}/document': {
+      post: { ...authOperation({ tags: ['MoU'], summary: 'Upload PDF final oleh pemilik rental', parameters: [idParameter] }), requestBody: jsonRequest({ type: 'object', required: ['documentDataUrl', 'stampType', 'signedAt', 'expiresAt', 'bothPartiesSigned'], properties: { documentDataUrl: { type: 'string', description: 'data:application/pdf;base64,... maksimal 8 MB; PDF final tidak diubah' }, stampType: { type: 'string', enum: ['PHYSICAL', 'E_METERAI'] }, signedAt: { type: 'string', format: 'date' }, expiresAt: { type: 'string', format: 'date' }, bothPartiesSigned: { type: 'boolean', enum: [true] } } }), responses: { 200: jsonResponse('PENDING untuk review'), 400: errorResponse('Dokumen/tanggal invalid'), 403: errorResponse('Perusahaan tidak diizinkan'), 409: errorResponse('Dokumen aktif tidak dapat diganti'), 503: errorResponse('Migration 011 diperlukan') } }
+    },
+    '/api/gps-agreements/{id}/document': {
+      get: { ...authOperation({ tags: ['MoU'], summary: 'Download PDF final privat', parameters: [idParameter] }), responses: { 200: { description: 'Byte PDF asli', content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } } }, 403: errorResponse('Akses tidak diizinkan'), 404: errorResponse('Dokumen belum ada') } }
+    },
+    '/api/mou/templates/{name}': {
+      get: { ...authOperation({ tags: ['MoU'], summary: 'Download template fisik/digital DOCX/PDF', parameters: [{ name: 'name', in: 'path', required: true, schema: { type: 'string', enum: ['mou-transrent-fisik.docx', 'mou-transrent-digital.docx', 'mou-transrent-fisik.pdf', 'mou-transrent-digital.pdf'] } }] }), responses: { 200: { description: 'Template dokumen' }, 404: errorResponse('Template tidak ditemukan') } }
     },
     '/api/maintenance/{id}/cancel': {
       post: {

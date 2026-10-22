@@ -1,9 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import { demoState } from './demoData.js';
 import { classifySupabaseError, supabase } from '../db.js';
-import { uploadDataUrl, uploadDataUrls } from '../storage.js';
+import { uploadDataUrl, uploadDataUrls, storageInfo } from '../storage.js';
 import { createPaymentRecord } from '../payments.js';
 
 const DELIVERY_RADIUS_KM = 15;
+const baliToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Makassar', year:'numeric',month:'2-digit',day:'2-digit' }).format(new Date());
+const internalMode = () => process.env.PAYMENT_MODE !== 'LEGACY_SIMULATION';
+
 
 const makeId = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -25,7 +29,34 @@ export const haversineKm = (lat1, lon1, lat2, lon2) => {
   return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-const dateOnly = (value) => new Date(`${value}T00:00:00Z`);
+const badRequest = (message) => { throw Object.assign(new Error(message), { status: 400 }); };
+const dateOnly = (value) => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) badRequest('Tanggal harus YYYY-MM-DD.');
+  const date = new Date(`${value}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) badRequest('Tanggal tidak valid.');
+  return date;
+};
+const validateReturn = (payload) => {
+  if (payload.actualReturnDate) dateOnly(payload.actualReturnDate);
+  if (payload.returnMethod && !['SELF_RETURN', 'STAFF_PICKUP'].includes(payload.returnMethod)) badRequest('Metode return tidak valid.');
+  if (payload.damageItems !== undefined && !Array.isArray(payload.damageItems)) badRequest('Daftar kerusakan tidak valid.');
+  for (const item of payload.damageItems || []) {
+    if (!item || typeof item.amount !== 'number' || !Number.isSafeInteger(item.amount) || item.amount < 0) badRequest('Denda harus rupiah bulat, tidak negatif.');
+  }
+  const total = (payload.damageItems || []).reduce((sum, item) => sum + item.amount, 0);
+  if (!Number.isSafeInteger(total) || total > 999999999999) badRequest('Total denda melebihi batas.');
+};
+const operationalCustomer = (user) => user ? ({ id: user.id, name: user.name, email: user.email, phone: user.phone }) : null;
+const hasActiveRental = (vehicleId) => demoState.rentals.some((rental) => rental.vehicleId === vehicleId && activeRentalStatuses.has(rental.status));
+const validateInspection = (payload) => {
+  for (const key of ['staffPhotos', 'customerPhotos', 'staffChecklist']) {
+    if (payload[key] !== undefined && (!Array.isArray(payload[key]) || payload[key].length > 50)) badRequest('Daftar inspeksi tidak valid.');
+  }
+  for (const item of payload.staffChecklist || []) if (typeof item !== 'string' || !item.trim() || item.length > 200) badRequest('Checklist tidak valid.');
+  for (const value of [payload.customerSignature, ...(payload.staffPhotos || []), ...(payload.customerPhotos || [])].filter((value) => value != null)) {
+    if (typeof value !== 'string' || !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) badRequest('Foto/tanda tangan harus file PNG, JPEG atau WebP.');
+  }
+};
 
 export const rentalDays = (startDate, endDate) => {
   const diff = dateOnly(endDate).getTime() - dateOnly(startDate).getTime();
@@ -190,7 +221,7 @@ const mapDbCompany = (company) => ({
   gpsAgreementExpiresAt: company.gps_agreement_expires_at || null
 });
 
-const mapDbBranch = (branch) => ({
+export const mapDbBranch = (branch) => ({
   id: branch.id,
   companyId: branch.company_id,
   name: branch.name,
@@ -214,6 +245,7 @@ const mapDbVehicle = (vehicle, branch, company, distanceKm = null) => ({
   deposit: Number(vehicle.deposit_amount || 0),
   status: vehicle.status,
   gpsStatus: vehicle.gps_status,
+  repairRequired: vehicle.repair_required === true,
   image: vehicle.image_url,
   branch,
   company,
@@ -309,8 +341,10 @@ export const createRentalCompany = async (actor, payload = {}) => {
     throw error;
   }
 
+  if (payload.creationKey && !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(payload.creationKey)) badRequest('Kunci setup tidak valid.');
   const companyPayload = {
     name,
+    ...(payload.creationKey ? {creation_key:payload.creationKey} : {}),
     legal_name: String(payload.legalName || '').trim() || null,
     email: String(payload.email || '').trim() || null,
     phone: String(payload.phone || '').trim() || null,
@@ -320,15 +354,18 @@ export const createRentalCompany = async (actor, payload = {}) => {
   };
 
   if (supabase) {
+    if(payload.creationKey){const existing=await supabase.from('rental_companies').select('*').eq('creation_key',payload.creationKey).maybeSingle();throwSupabaseError('Gagal membaca checkpoint perusahaan',existing.error);if(existing.data)return {...mapDbCompany(existing.data),branches:[]};}
     const result = await supabase
       .from('rental_companies')
-      .insert(companyPayload)
+      .upsert(companyPayload,{onConflict:'creation_key',ignoreDuplicates:true})
       .select('id,name,legal_name,email,phone,description,status,delivery_radius_km')
       .single();
+    if(result.error?.code==='PGRST116' && payload.creationKey){const existing=await supabase.from('rental_companies').select('*').eq('creation_key',payload.creationKey).single();throwSupabaseError('Gagal melanjutkan checkpoint perusahaan',existing.error);return {...mapDbCompany(existing.data),branches:[]};}
     throwSupabaseError('Gagal menambahkan perusahaan rental', result.error);
     return { ...mapDbCompany(result.data), branches: [] };
   }
 
+  if(payload.creationKey){const existing=demoState.companies.find(c=>c.creationKey===payload.creationKey);if(existing)return mapDemoCompanyForAdmin(existing);}
   const duplicate = demoState.companies.find((company) => company.name.toLowerCase() === name.toLowerCase());
   if (duplicate) {
     const error = new Error('Nama perusahaan sudah terdaftar.');
@@ -336,6 +373,7 @@ export const createRentalCompany = async (actor, payload = {}) => {
     throw error;
   }
   const company = {
+    creationKey:payload.creationKey,
     id: makeId('company'),
     name,
     legalName: companyPayload.legal_name,
@@ -434,20 +472,25 @@ const mapAgreement = (row, company = null) => ({
   companyId: row.company_id,
   companyName: company?.name || row.company_name || null,
   agreementNumber: row.agreement_number,
-  status: row.status,
-  gpsTrackingAllowed: row.gps_tracking_allowed,
+  status: row.status==='ACTIVE' && row.expires_at && new Date(row.expires_at)<=new Date() ? 'EXPIRED' : row.status,
+  storedStatus: row.status,
+  workflowStage: row.workflow_stage || row.workflowStage || (['ACTIVE','EXPIRED','REVOKED'].includes(row.status) ? row.status : row.document_path ? 'WAITING_REVIEW' : 'WAITING_OWNER'),
+  revisionReason: row.revision_reason || row.revisionReason, predecessorId:row.predecessor_id, supersededBy:row.superseded_by, documentVersions:(row.document_versions||row.documentVersions||[]).map((v,i)=>({version:i,uploadedAt:v.metadata?.uploadedAt,archivedAt:v.archivedAt})),
+  gpsTrackingAllowed: row.gps_tracking_allowed && (!row.expires_at || new Date(row.expires_at)>new Date()),
   signedAt: row.signed_at,
   expiresAt: row.expires_at,
   documentPath: row.document_path,
+  documentMetadata: row.document_metadata || {},
+  onlineSimulation: row.online_simulation ? { receiptId: row.online_simulation.receiptId, acceptedAt: row.online_simulation.acceptedAt, termsVersion: row.online_simulation.termsVersion, mode: row.online_simulation.mode } : null,
   notes: row.notes,
   createdAt: row.created_at,
   updatedAt: row.updated_at
 });
 
 export const listGpsAgreements = async (actor) => {
-  requireCentralAdmin(actor);
+  if (!['CENTRAL_ADMIN', 'RENTAL_ADMIN'].includes(actor.role)) throw Object.assign(new Error('Akses MoU tidak diizinkan.'), { status: 403 });
   if (!supabase) {
-    return demoState.agreements.map((agreement) => mapAgreement(
+    return demoState.agreements.filter((a) => actor.role === 'CENTRAL_ADMIN' || a.companyId === actor.companyId).map((agreement) => mapAgreement(
       {
         ...agreement,
         company_id: agreement.companyId,
@@ -456,6 +499,8 @@ export const listGpsAgreements = async (actor) => {
         signed_at: agreement.signedAt,
         expires_at: agreement.expiresAt,
         document_path: agreement.documentPath || null,
+        document_metadata: agreement.documentMetadata || {},
+        online_simulation: agreement.onlineSimulation || null,
         created_at: agreement.createdAt || null,
         updated_at: agreement.updatedAt || null
       },
@@ -463,12 +508,14 @@ export const listGpsAgreements = async (actor) => {
     ));
   }
 
-  const [agreementsResult, companiesResult] = await Promise.all([
-    supabase.from('rental_company_agreements')
-      .select('id,company_id,agreement_number,status,gps_tracking_allowed,signed_at,expires_at,document_path,notes,created_at,updated_at')
-      .order('created_at', { ascending: false }),
-    supabase.from('rental_companies').select('id,name')
-  ]);
+  let agreementsQuery = supabase.from('rental_company_agreements').select('*').order('created_at', { ascending: false });
+  let companiesQuery = supabase.from('rental_companies').select('id,name');
+  if (actor.role === 'RENTAL_ADMIN') {
+    if (!actor.companyId) return [];
+    agreementsQuery = agreementsQuery.eq('company_id', actor.companyId);
+    companiesQuery = companiesQuery.eq('id', actor.companyId);
+  }
+  const [agreementsResult, companiesResult] = await Promise.all([agreementsQuery, companiesQuery]);
   throwSupabaseError('Gagal membaca agreement GPS', agreementsResult.error);
   throwSupabaseError('Gagal membaca nama perusahaan agreement', companiesResult.error);
   const companies = new Map((companiesResult.data || []).map((company) => [company.id, company]));
@@ -478,7 +525,7 @@ export const listGpsAgreements = async (actor) => {
 export const updateGpsAgreement = async (actor, agreementId, payload = {}) => {
   requireCentralAdmin(actor);
   const status = payload.status;
-  if (!['DRAFT', 'PENDING', 'ACTIVE', 'EXPIRED', 'REVOKED'].includes(status)) {
+  if (!['DRAFT', 'PENDING', 'ACTIVE', 'EXPIRED', 'REVOKED'].includes(status) && payload.decision !== 'REVISION_REQUIRED') {
     const error = new Error('Status agreement GPS tidak valid.');
     error.status = 400;
     throw error;
@@ -492,13 +539,19 @@ export const updateGpsAgreement = async (actor, agreementId, payload = {}) => {
       error.status = 404;
       throw error;
     }
+    if (['ACTIVE','EXPIRED','REVOKED'].includes(agreement.status) && !(agreement.status==='ACTIVE'&&['EXPIRED','REVOKED'].includes(status))) throw Object.assign(new Error('MoU final tidak dapat dibuka kembali; buat perpanjangan baru.'),{status:409});
+    if (payload.decision==='REVISION_REQUIRED') { if ((agreement.workflowStage|| (agreement.documentPath?'WAITING_REVIEW':'WAITING_OWNER')) !== 'WAITING_REVIEW') badRequest('Belum ada dokumen untuk direvisi.'); agreement.revisionReason=requiredReason(payload.reason); agreement.workflowStage='REVISION_REQUIRED'; return {...agreement}; }
+    if (['EXPIRED','REVOKED'].includes(status)) requiredReason(payload.reason);
     if (status === 'ACTIVE') {
+      if (!agreement.documentPath || !agreement.documentMetadata?.sha256 || payload.reviewed !== true || payload.reviewedSha256 !== agreement.documentMetadata.sha256 || !agreement.expiresAt || new Date(agreement.expiresAt) <= new Date()) throw Object.assign(new Error('Periksa PDF final dan masa berlaku sebelum aktivasi.'), { status: 409 });
+      agreement.documentMetadata = { ...agreement.documentMetadata, reviewed: true, reviewedBy: actor.id, reviewedAt: new Date().toISOString() };
       const company = getCompany(agreement.companyId);
       if (company?.status !== 'ACTIVE') {
         const error = new Error('Perusahaan harus berstatus Aktif sebelum MoU GPS diaktifkan.');
         error.status = 409;
         throw error;
       }
+      if (agreement.predecessorId) { const old=demoState.agreements.find(a=>a.id===agreement.predecessorId); if(old?.status==='ACTIVE') Object.assign(old,{status:'REVOKED',workflowStage:'REVOKED',gpsTrackingAllowed:false}); }
       if (demoState.agreements.some((item) => item.id !== agreementId && item.companyId === agreement.companyId && item.status === 'ACTIVE')) {
         const error = new Error('Perusahaan sudah memiliki MoU aktif. Nonaktifkan MoU lama terlebih dahulu.');
         error.status = 409;
@@ -506,6 +559,7 @@ export const updateGpsAgreement = async (actor, agreementId, payload = {}) => {
       }
     }
     agreement.status = status;
+    agreement.workflowStage = status;
     agreement.gpsTrackingAllowed = gpsTrackingAllowed;
     agreement.updatedAt = new Date().toISOString();
     return mapAgreement({
@@ -519,70 +573,17 @@ export const updateGpsAgreement = async (actor, agreementId, payload = {}) => {
     }, getCompany(agreement.companyId));
   }
 
-  if (status === 'ACTIVE') {
-    const currentResult = await supabase
-      .from('rental_company_agreements')
-      .select('id,company_id')
-      .eq('id', agreementId)
-      .maybeSingle();
-    throwSupabaseError('Gagal membaca agreement GPS', currentResult.error);
-    if (!currentResult.data) {
-      const error = new Error('Agreement GPS tidak ditemukan.');
-      error.status = 404;
-      throw error;
-    }
-    const companyResult = await supabase
-      .from('rental_companies')
-      .select('id,status')
-      .eq('id', currentResult.data.company_id)
-      .maybeSingle();
-    throwSupabaseError('Gagal membaca status perusahaan rental', companyResult.error);
-    if (companyResult.data?.status !== 'ACTIVE') {
-      const error = new Error('Perusahaan harus berstatus Aktif sebelum MoU GPS diaktifkan.');
-      error.status = 409;
-      throw error;
-    }
-    const activeResult = await supabase
-      .from('rental_company_agreements')
-      .select('id')
-      .eq('company_id', currentResult.data.company_id)
-      .eq('status', 'ACTIVE')
-      .neq('id', agreementId)
-      .maybeSingle();
-    throwSupabaseError('Gagal memeriksa MoU aktif', activeResult.error);
-    if (activeResult.data) {
-      const error = new Error('Perusahaan sudah memiliki MoU aktif. Nonaktifkan MoU lama terlebih dahulu.');
-      error.status = 409;
-      throw error;
-    }
-  }
-
-  const result = await supabase
-    .from('rental_company_agreements')
-    .update({
-      status,
-      gps_tracking_allowed: gpsTrackingAllowed,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', agreementId)
-    .select('id,company_id,agreement_number,status,gps_tracking_allowed,signed_at,expires_at,document_path,notes,created_at,updated_at')
-    .maybeSingle();
-  throwSupabaseError('Gagal memperbarui agreement GPS', result.error);
-  if (!result.data) {
-    const error = new Error('Agreement GPS tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-  const companyResult = await supabase
-    .from('rental_companies')
-    .select('id,name')
-    .eq('id', result.data.company_id)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca perusahaan agreement GPS', companyResult.error);
-  return mapAgreement(result.data, companyResult.data);
+  const { data, error } = await supabase.rpc('transrent_mou', { p_actor: actor.id, p_id: agreementId, p_action: 'REVIEW', p_payload: payload });
+  if (error?.code === 'PGRST202') throw Object.assign(new Error('Migration 011 belum tersedia.'), { status: 503, code: 'MIGRATION_REQUIRED' });
+  if (error && /^PT\d{3}$/.test(error.code)) throw Object.assign(new Error(error.message), { status: Number(error.code.slice(2)) });
+  throwSupabaseError('Gagal mereview MoU', error);
+  return mapAgreement(data);
 };
 
 const validateAgreementDates = (signedAt, expiresAt) => {
+  for (const value of [signedAt, expiresAt]) {
+    if (value && !Number.isFinite(new Date(value).getTime())) badRequest('Tanggal MoU tidak valid.');
+  }
   if (signedAt && expiresAt && new Date(expiresAt).getTime() <= new Date(signedAt).getTime()) {
     const error = new Error('Tanggal berakhir MoU harus setelah tanggal tanda tangan.');
     error.status = 400;
@@ -591,203 +592,32 @@ const validateAgreementDates = (signedAt, expiresAt) => {
 };
 
 export const createGpsAgreement = async (actor, payload = {}) => {
-  requireCentralAdmin(actor, 'Hanya Admin Pusat yang dapat menambahkan MoU GPS.');
+  requireCentralAdmin(actor, 'Hanya Admin Pusat yang dapat mengirim permintaan MoU.');
   const companyId = String(payload.companyId || '').trim();
-  const status = payload.status || 'DRAFT';
-  const signedAt = payload.signedAt || null;
-  const expiresAt = payload.expiresAt || null;
-  if (!companyId) {
-    const error = new Error('Perusahaan MoU wajib dipilih.');
-    error.status = 400;
-    throw error;
+  if (!companyId) badRequest('Perusahaan tujuan wajib dipilih.');
+  if (payload.status && payload.status !== 'PENDING') badRequest('Permintaan MoU baru harus berstatus PENDING.');
+  if (payload.documentDataUrl || payload.documentPath || payload.signedAt || payload.expiresAt || payload.gpsTrackingAllowed) {
+    badRequest('Dokumen final, tanggal tanda tangan dan masa berlaku diisi oleh pemilik rental melalui tanggapan MoU.');
   }
-  if (!['DRAFT', 'PENDING', 'ACTIVE', 'EXPIRED', 'REVOKED'].includes(status)) {
-    const error = new Error('Status agreement GPS tidak valid.');
-    error.status = 400;
-    throw error;
-  }
-  validateAgreementDates(signedAt, expiresAt);
-  const gpsTrackingAllowed = status === 'ACTIVE' && payload.gpsTrackingAllowed === true;
-  const documentPath = await uploadDataUrl(payload.documentDataUrl, {
-    folder: 'agreements',
-    ownerId: companyId,
-    fileName: `mou-${Date.now()}`
-  });
-
+  if (payload.notes != null && (typeof payload.notes !== 'string' || payload.notes.length > 2000)) badRequest('Catatan permintaan maksimal 2000 karakter.');
+  const notes = payload.notes?.trim() || null;
   if (!supabase) {
     const company = getCompany(companyId);
-    if (!company) {
-      const error = new Error('Perusahaan rental tidak ditemukan.');
-      error.status = 404;
-      throw error;
-    }
-    const agreementNumber = nextDemoAgreementNumber();
-    if (status === 'ACTIVE' && company.status !== 'ACTIVE') {
-      const error = new Error('Perusahaan harus berstatus Aktif sebelum MoU GPS diaktifkan.');
-      error.status = 409;
-      throw error;
-    }
-    if (status === 'ACTIVE' && demoState.agreements.some((agreement) => agreement.companyId === companyId && agreement.status === 'ACTIVE')) {
-      const error = new Error('Perusahaan sudah memiliki MoU aktif. Nonaktifkan MoU lama terlebih dahulu.');
-      error.status = 409;
-      throw error;
-    }
+    if (!company) throw Object.assign(new Error('Perusahaan rental tidak ditemukan.'), { status: 404 });
+    const existing=demoState.agreements.find(a=>a.companyId===companyId&&['DRAFT','PENDING'].includes(a.status)&&a.workflowStage!=='ARCHIVED'); if(existing) return {...existing,companyName:company.name};
     const now = new Date().toISOString();
-    const agreement = {
-      id: makeId('agr'),
-      companyId,
-      agreementNumber,
-      status,
-      gpsTrackingAllowed,
-      signedAt,
-      expiresAt,
-      documentPath: documentPath || null,
-      notes: String(payload.notes || '').trim() || null,
-      createdAt: now,
-      updatedAt: now
-    };
+    const agreement = { workflowStage:'WAITING_OWNER',predecessorId:demoState.agreements.find(a=>a.companyId===companyId&&a.status==='ACTIVE')?.id, id: makeId('agr'), companyId, agreementNumber: nextDemoAgreementNumber(), status: 'PENDING', gpsTrackingAllowed: false, signedAt: null, expiresAt: null, documentPath: null, notes, createdAt: now, updatedAt: now };
     demoState.agreements.push(agreement);
-    return mapAgreement({
-      ...agreement,
-      company_id: companyId,
-      agreement_number: agreementNumber,
-      gps_tracking_allowed: gpsTrackingAllowed,
-      signed_at: signedAt,
-      expires_at: expiresAt,
-      document_path: documentPath || null,
-      created_at: now,
-      updated_at: now
-    }, company);
+    return { ...agreement, companyName: company.name };
   }
-
-  const companyResult = await supabase
-    .from('rental_companies')
-    .select('id,name,status')
-    .eq('id', companyId)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca perusahaan MoU', companyResult.error);
-  if (!companyResult.data) {
-    const error = new Error('Perusahaan rental tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-  if (status === 'ACTIVE' && companyResult.data.status !== 'ACTIVE') {
-    const error = new Error('Perusahaan harus berstatus Aktif sebelum MoU GPS diaktifkan.');
-    error.status = 409;
-    throw error;
-  }
-  if (status === 'ACTIVE') {
-    const activeResult = await supabase
-      .from('rental_company_agreements')
-      .select('id')
-      .eq('company_id', companyId)
-      .eq('status', 'ACTIVE')
-      .maybeSingle();
-    throwSupabaseError('Gagal memeriksa MoU aktif', activeResult.error);
-    if (activeResult.data) {
-      const error = new Error('Perusahaan sudah memiliki MoU aktif. Nonaktifkan MoU lama terlebih dahulu.');
-      error.status = 409;
-      throw error;
-    }
-  }
-
-  const result = await supabase
-    .from('rental_company_agreements')
-    .insert({
-      company_id: companyId,
-      status,
-      gps_tracking_allowed: gpsTrackingAllowed,
-      signed_at: signedAt,
-      expires_at: expiresAt,
-      document_path: documentPath || null,
-      notes: String(payload.notes || '').trim() || null
-    })
-    .select('id,company_id,agreement_number,status,gps_tracking_allowed,signed_at,expires_at,document_path,notes,created_at,updated_at')
-    .single();
-  throwSupabaseError('Gagal menambahkan MoU GPS', result.error);
-  return mapAgreement(result.data, companyResult.data);
+  const companyResult = await supabase.from('rental_companies').select('id,name,status').eq('id', companyId).maybeSingle();
+  throwSupabaseError('Gagal membaca perusahaan tujuan', companyResult.error);
+  if (!companyResult.data) throw Object.assign(new Error('Perusahaan rental tidak ditemukan.'), { status: 404 });
+  const { rpc }=await import('../operations.js');
+  return mapAgreement(await rpc('transrent_mou',{p_actor:actor.id,p_id:companyId,p_action:'REQUEST',p_payload:{notes}}),companyResult.data);
 };
 
-export const inviteRentalAdmin = async (actor, companyId, payload = {}) => {
-  requireCentralAdmin(actor, 'Hanya Admin Pusat yang dapat mengundang Admin Rental.');
-  const name = String(payload.name || '').trim();
-  const email = String(payload.email || '').trim().toLowerCase();
-  if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
-    const error = new Error('Email Admin Rental tidak valid.');
-    error.status = 400;
-    throw error;
-  }
-  const company = supabase
-    ? null
-    : getCompany(companyId);
-  if (!supabase && !company) {
-    const error = new Error('Perusahaan rental tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-
-  if (supabase) {
-    const inviteResult = await supabase.auth.admin.inviteUserByEmail(email, {
-      data: {
-        name: name || email.split('@')[0],
-        role: 'RENTAL_ADMIN',
-        company_id: companyId
-      }
-    });
-    if (inviteResult.error || !inviteResult.data?.user) {
-      const error = new Error(`Gagal mengirim undangan Admin Rental: ${inviteResult.error?.message || 'User tidak dibuat.'}`);
-      error.status = inviteResult.error?.status || 502;
-      throw error;
-    }
-    const profileResult = await supabase
-      .from('profiles')
-      .upsert({
-        id: inviteResult.data.user.id,
-        name: name || email.split('@')[0],
-        email,
-        role: 'RENTAL_ADMIN',
-        company_id: companyId,
-        branch_id: null,
-        verification_status: 'VERIFIED',
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'id' })
-      .select(profileSelect)
-      .single();
-    throwSupabaseError('Gagal menyiapkan profile Admin Rental', profileResult.error);
-    return {
-      invitationStatus: 'SENT',
-      email,
-      companyId,
-      user: mapDbProfile(profileResult.data)
-    };
-  }
-
-  if (findUserByEmail(email)) {
-    const error = new Error('Email Admin Rental sudah terdaftar.');
-    error.status = 409;
-    throw error;
-  }
-  const temporaryPassword = `tr-${Math.random().toString(36).slice(2, 10)}`;
-  const user = {
-    id: makeId('usr'),
-    email,
-    password: temporaryPassword,
-    name: name || email.split('@')[0],
-    role: 'RENTAL_ADMIN',
-    companyId,
-    branchId: null,
-    verificationStatus: 'VERIFIED',
-    accountStatus: 'INVITED'
-  };
-  demoState.users.push(user);
-  return {
-    invitationStatus: 'DEMO_TEMPORARY_PASSWORD',
-    email,
-    companyId,
-    temporaryPassword,
-    user: getPublicUser(user)
-  };
-};
+export const inviteRentalAdmin = async (actor,companyId,payload={}) => { const {requestInvite}=await import('../invites.js');return requestInvite(actor,companyId,payload); };
 
 const decorateVehicle = (vehicle, distanceKm = null) => {
   const branch = getBranch(vehicle.branchId);
@@ -805,7 +635,7 @@ const decorateVehicle = (vehicle, distanceKm = null) => {
 export const isVehicleAvailable = (vehicleId, startDate, endDate, exceptReservationId = null) => {
   expireReservations();
   const vehicle = getVehicle(vehicleId);
-  if (!vehicle || vehicle.status === 'MAINTENANCE' || vehicle.gpsStatus !== 'READY') return false;
+  if (!vehicle || vehicle.repairRequired || vehicle.status !== 'AVAILABLE' || vehicle.gpsStatus !== 'READY') return false;
   const reservationConflict = demoState.reservations.some((reservation) => (
     reservation.vehicleId === vehicleId
     && reservation.id !== exceptReservationId
@@ -855,9 +685,10 @@ const searchVehiclesFromSupabase = async ({ latitude, longitude, startDate, endD
   }
 
   let vehicleQuery = supabase.from('vehicles')
-    .select('id,company_id,branch_id,gps_device_id,name,type,transmission,seats,year,plate_number,price_per_day,deposit_amount,status,gps_status,image_url')
+    .select(vehicleSelect)
     .eq('status', 'AVAILABLE')
-    .eq('gps_status', 'READY');
+    .eq('gps_status', 'READY')
+    .eq('repair_required', false);
   if (type && type !== 'ALL') vehicleQuery = vehicleQuery.eq('type', type);
 
   const [companiesResult, branchesResult, vehiclesResult, devicesResult, reservationsResult, rentalsResult, maintenanceResult, agreementsResult] = await Promise.all([
@@ -959,12 +790,13 @@ const reservationSelect = `
   status,
   expires_at,
   paid_at,
+  cancelled_at,
+  cancellation,
   created_at
 `;
 
-const vehicleSelect = 'id,company_id,branch_id,gps_device_id,name,type,transmission,seats,year,plate_number,price_per_day,deposit_amount,status,gps_status,image_url';
+const vehicleSelect = 'id,company_id,branch_id,gps_device_id,name,type,transmission,seats,year,plate_number,price_per_day,deposit_amount,status,gps_status,image_url,repair_required';
 
-const paymentSelect = 'id,reservation_id,provider,provider_reference,amount,status,paid_at,created_at';
 
 const queryByIds = (table, select, ids) => (
   ids.length
@@ -988,7 +820,7 @@ const loadReservationContext = async (rows) => {
     queryByIds('vehicles', vehicleSelect, vehicleIds),
     queryByIds('branches', 'id,company_id,name,address,phone,location', branchIds),
     queryByIds('rental_companies', 'id,name,legal_name,email,phone,description,status,delivery_radius_km', companyIds),
-    queryByIds('profiles', profileSelect, customerIds)
+    queryByIds('profiles', 'id,name,email,phone', customerIds)
   ]);
 
   throwSupabaseError('Gagal membaca kendaraan reservasi', vehiclesResult.error);
@@ -1033,11 +865,13 @@ const mapDbReservation = (row, context) => {
     status: row.status,
     expiresAt: row.expires_at,
     paidAt: row.paid_at,
+    cancelledAt: row.cancelled_at,
+    cancellation: row.cancellation || null,
     createdAt: row.created_at,
     branch,
     company,
     vehicle: vehicle ? mapDbVehicle(vehicle, branch, company) : null,
-    customer: customer ? mapDbProfile(customer) : null
+    customer: operationalCustomer(customer)
   };
 };
 
@@ -1053,7 +887,7 @@ const listReservationsDemo = (actor) => {
     .map((reservation) => ({
       ...reservation,
       vehicle: decorateVehicle(getVehicle(reservation.vehicleId)),
-      customer: getPublicUser(getUser(reservation.customerId))
+      customer: operationalCustomer(getUser(reservation.customerId))
     }));
 };
 
@@ -1097,6 +931,8 @@ const rentalSelect = `
   completed_at,
   return_method,
   return_schedule,
+  actual_return_date,
+  fine_payment,
   created_at
 `;
 
@@ -1114,6 +950,22 @@ const mapDbLocation = (row) => {
   };
 };
 
+const mapDbDispute = (row) => ({
+  id: row.id, fineId: row.fine_id, customerId: row.customer_id, reason: row.reason,
+  status: row.status, createdAt: row.created_at, resolvedAt: row.resolved_at,
+  resolvedBy: row.resolved_by, resolutionNotes: row.resolution_notes,
+  originalAmount: row.original_amount == null ? null : Number(row.original_amount),
+  finalAmount: row.final_amount == null ? null : Number(row.final_amount)
+});
+
+const financialSummary = (fines, deposit, payment, disputes) => {
+  const fineTotal = fines.filter((f) => f.status !== 'CANCELLED').reduce((sum, f) => sum + f.amount, 0);
+  return { fineTotal, depositApplied: Math.min(deposit, fineTotal),
+    balanceDue: Math.max(0, fineTotal - deposit - (payment?.amount || 0)),
+    refundAmount: Math.max(0, deposit - fineTotal),
+    disputed: fines.some((f) => f.status === 'DISPUTED') || disputes.some((d) => d.status === 'OPEN') };
+};
+
 const mapDbFine = (row) => ({
   id: row.id,
   rentalId: row.rental_id,
@@ -1127,7 +979,8 @@ const mapDbRefund = (row) => ({
   id: row.id,
   rentalId: row.rental_id,
   amount: Number(row.amount || 0),
-  status: row.status === 'APPROVED' ? 'APPROVED_SIMULATED' : row.status,
+  status: row.status === 'APPROVED' && row.provider !== 'INTERNAL_MANUAL' ? 'APPROVED_SIMULATED' : row.status,
+  provider: row.provider, payoutReference: row.payout_reference, paidAt: row.paid_at,
   confirmedBy: row.confirmed_by,
   createdAt: row.created_at,
   confirmedAt: row.confirmed_at
@@ -1146,9 +999,9 @@ const loadRentalContext = async (rows) => {
     queryByIds('vehicles', vehicleSelect, vehicleIds),
     queryByIds('branches', 'id,company_id,name,address,phone,location', branchIds),
     queryByIds('rental_companies', 'id,name,legal_name,email,phone,description,status,delivery_radius_km', companyIds),
-    queryByIds('profiles', profileSelect, customerIds),
+    queryByIds('profiles', 'id,name,email,phone', customerIds),
     queryByColumn('fines', 'id,rental_id,amount,status,damage_items,created_at', 'rental_id', rentalIds),
-    queryByColumn('refunds', 'id,rental_id,amount,status,confirmed_by,created_at,confirmed_at', 'rental_id', rentalIds),
+    queryByColumn('refunds', 'id,rental_id,amount,status,confirmed_by,created_at,confirmed_at,provider,payout_reference,paid_at', 'rental_id', rentalIds),
     queryByColumn('vehicle_locations', 'id,vehicle_id,rental_id,location,speed,heading,recorded_at', 'rental_id', rentalIds)
   ]);
 
@@ -1161,7 +1014,11 @@ const loadRentalContext = async (rows) => {
   throwSupabaseError('Gagal membaca refund rental', refundsResult.error);
   throwSupabaseError('Gagal membaca lokasi rental', locationsResult.error);
 
+  const disputesResult = await queryByColumn('fine_disputes', '*', 'fine_id', (finesResult.data || []).map((f) => f.id));
+  throwSupabaseError('Gagal membaca sengketa rental', disputesResult.error);
   return {
+    allFines: (finesResult.data || []).map(mapDbFine),
+    disputes: (disputesResult.data || []).map(mapDbDispute),
     reservations: new Map((reservationsResult.data || []).map((row) => [row.id, row])),
     vehicles: new Map((vehiclesResult.data || []).map((row) => [row.id, row])),
     branches: new Map((branchesResult.data || []).map((row) => [row.id, mapDbBranch(row)])),
@@ -1179,6 +1036,8 @@ const mapDbRental = (row, context) => {
   const company = context.companies.get(row.company_id) || null;
   const customer = context.customers.get(row.customer_id) || null;
   const reservation = context.reservations.get(row.reservation_id) || null;
+  const fines = context.allFines.filter((f) => f.rentalId === row.id);
+  const disputes = context.disputes.filter((d) => fines.some((f) => f.id === d.fineId));
   const locations = context.locations
     .filter((location) => location.rentalId === row.id)
     .sort((a, b) => new Date(b.recordedAt) - new Date(a.recordedAt));
@@ -1198,11 +1057,13 @@ const mapDbRental = (row, context) => {
     completedAt: row.completed_at,
     returnMethod: row.return_method,
     returnSchedule: row.return_schedule,
+    actualReturnDate: row.actual_return_date,
+    finePayment: row.fine_payment || null,
     createdAt: row.created_at,
     vehicle: vehicle ? mapDbVehicle(vehicle, branch, company) : null,
     branch,
     company,
-    customer: customer ? mapDbProfile(customer) : null,
+    customer: operationalCustomer(customer),
     reservation: reservation ? mapDbReservation(reservation, {
       vehicles: context.vehicles,
       branches: context.branches,
@@ -1210,6 +1071,9 @@ const mapDbRental = (row, context) => {
       customers: context.customers
     }) : null,
     fine: context.fines.get(row.id) || null,
+    fines,
+    disputes,
+    settlement: financialSummary(fines, Number(reservation?.deposit_amount || 0), row.fine_payment, disputes),
     refund: context.refunds.get(row.id) || null,
     latestLocation: locations[0] || null
   };
@@ -1225,11 +1089,14 @@ const listRentalsDemo = (actor) => demoState.rentals
   .map((rental) => ({
     ...rental,
     vehicle: decorateVehicle(getVehicle(rental.vehicleId)),
-    customer: getPublicUser(getUser(rental.customerId)),
+    customer: operationalCustomer(getUser(rental.customerId)),
     reservation: demoState.reservations.find((item) => item.id === rental.reservationId),
     fine: demoState.fines.find((item) => item.rentalId === rental.id) || null,
+    fines: demoState.fines.filter((f) => f.rentalId === rental.id),
+    disputes: demoState.disputes.filter((d) => demoState.fines.some((f) => f.rentalId === rental.id && f.id === d.fineId)),
+    settlement: demoSettlement(rental),
     refund: demoState.refunds.find((item) => item.rentalId === rental.id) || null,
-    latestLocation: [...demoState.locations].filter((item) => item.vehicleId === rental.vehicleId).sort((a, b) => new Date(b.recordedAt) - new Date(a.recordedAt))[0] || null
+    latestLocation: (actor.role==='CUSTOMER'&&!demoState.agreements.some(a=>a.companyId===rental.companyId&&a.status==='ACTIVE'&&a.gpsTrackingAllowed&&(!a.expiresAt||new Date(a.expiresAt)>new Date())) ? [] : [...demoState.locations]).filter((item) => item.rentalId === rental.id).sort((a, b) => new Date(b.recordedAt) - new Date(a.recordedAt))[0] || null
   }));
 
 const listRentalsFromSupabase = async (actor) => {
@@ -1250,12 +1117,20 @@ const listRentalsFromSupabase = async (actor) => {
 
   const rows = data || [];
   const context = await loadRentalContext(rows);
-  return rows.map((row) => mapDbRental(row, context));
+  const mapped=rows.map((row) => mapDbRental(row, context));
+  if(actor.role==='CUSTOMER'){const allowed=await Promise.all(mapped.map(r=>getActiveGpsAgreement(r.companyId)));mapped.forEach((r,i)=>{if(!allowed[i])r.latestLocation=null;});}
+  return mapped;
 };
 
 export const listRentals = (actor) => (
   supabase ? listRentalsFromSupabase(actor) : listRentalsDemo(actor)
 );
+
+const assertDemoReadiness = (vehicle, customerId) => {
+  if (getUser(customerId)?.verificationStatus !== 'VERIFIED') throw Object.assign(new Error('Customer belum terverifikasi.'), { status: 403 });
+  const readyMou = demoState.agreements.some((a) => a.companyId === vehicle.companyId && a.status === 'ACTIVE' && a.gpsTrackingAllowed && (!a.expiresAt || new Date(a.expiresAt).getTime() > Date.now()));
+  if (getCompany(vehicle.companyId)?.status !== 'ACTIVE' || !readyMou || vehicle.repairRequired || vehicle.gpsStatus !== 'READY' || demoState.maintenances.some((m) => m.vehicleId === vehicle.id && ['SCHEDULED','IN_PROGRESS'].includes(m.status))) throw Object.assign(new Error('Perusahaan, MoU, GPS atau kendaraan belum siap.'), { status: 409 });
+};
 
 const createReservationDemo = (actor, payload) => {
   if (actor.role !== 'CUSTOMER') {
@@ -1281,6 +1156,7 @@ const createReservationDemo = (actor, payload) => {
     error.status = 400;
     throw error;
   }
+  assertDemoReadiness(vehicle, actor.id);
   if (!isVehicleAvailable(vehicle.id, payload.startDate, payload.endDate)) {
     const error = new Error('Kendaraan sudah tidak tersedia pada periode tersebut.');
     error.status = 409;
@@ -1301,6 +1177,7 @@ const createReservationDemo = (actor, payload) => {
       throw error;
     }
   }
+  if (internalMode() && payload.startDate < baliToday()) badRequest('Tanggal mulai tidak boleh di masa lalu.');
   const days = rentalDays(payload.startDate, payload.endDate);
   const rentalAmount = vehicle.pricePerDay * days;
   const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
@@ -1332,211 +1209,10 @@ const createReservationDemo = (actor, payload) => {
 };
 
 const createReservationFromSupabase = async (actor, payload) => {
-  if (actor.role !== 'CUSTOMER') {
-    const error = new Error('Hanya customer yang dapat membuat reservasi.');
-    error.status = 403;
-    throw error;
-  }
-
-  const profileResult = await supabase
-    .from('profiles')
-    .select('verification_status')
-    .eq('id', actor.id)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca status verifikasi customer', profileResult.error);
-
-  if (profileResult.data?.verification_status !== 'VERIFIED') {
-    const error = new Error(
-      'Akun customer belum terverifikasi. Reservasi belum dapat dibuat.'
-    );
-    error.status = 403;
-    throw error;
-  }
-
-  if (
-    !payload.startDate
-    || !payload.endDate
-    || dateOnly(payload.endDate) <= dateOnly(payload.startDate)
-  ) {
-    const error = new Error('Periode rental tidak valid.');
-    error.status = 400;
-    throw error;
-  }
-
-  const vehicleResult = await supabase
-    .from('vehicles')
-    .select(vehicleSelect)
-    .eq('id', payload.vehicleId)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca kendaraan', vehicleResult.error);
-
-  const vehicle = vehicleResult.data;
-  if (!vehicle) {
-    const error = new Error('Kendaraan tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-
-  if (vehicle.status !== 'AVAILABLE' || vehicle.gps_status !== 'READY') {
-    const error = new Error(
-      'Kendaraan tidak tersedia atau GPS belum siap.'
-    );
-    error.status = 409;
-    throw error;
-  }
-
-  const [branchResult, companyResult, deviceResult] = await Promise.all([
-    supabase
-      .from('branches')
-      .select('id,company_id,name,address,phone,location')
-      .eq('id', vehicle.branch_id)
-      .maybeSingle(),
-    supabase
-      .from('rental_companies')
-      .select('id,name,legal_name,email,phone,description,status,delivery_radius_km')
-      .eq('id', vehicle.company_id)
-      .maybeSingle(),
-    vehicle.gps_device_id
-      ? supabase.from('gps_devices').select('id,status').eq('id', vehicle.gps_device_id).maybeSingle()
-      : Promise.resolve({ data: null, error: null })
-  ]);
-
-  throwSupabaseError('Gagal membaca cabang', branchResult.error);
-  throwSupabaseError('Gagal membaca perusahaan rental', companyResult.error);
-  throwSupabaseError('Gagal membaca GPS device', deviceResult.error);
-
-  const branch = branchResult.data ? mapDbBranch(branchResult.data) : null;
-  const company = companyResult.data ? mapDbCompany(companyResult.data) : null;
-
-  if (!branch || !company) {
-    const error = new Error('Cabang atau perusahaan kendaraan tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-
-  const gpsAgreement = await getActiveGpsAgreement(vehicle.company_id);
-  if (!gpsAgreement) {
-    const error = new Error('Perusahaan rental belum memiliki MoU GPS aktif. Kendaraan belum dapat dipesan.');
-    error.status = 409;
-    error.code = 'GPS_AGREEMENT_REQUIRED';
-    throw error;
-  }
-
-  if (deviceResult.data?.status !== 'READY') {
-    const error = new Error('GPS kendaraan belum berstatus READY.');
-    error.status = 409;
-    throw error;
-  }
-
-  const [reservationConflict, rentalConflict, maintenanceConflict] = await Promise.all([
-    supabase
-      .from('reservations')
-      .select('id')
-      .eq('vehicle_id', vehicle.id)
-      .in('status', ['PENDING_PAYMENT', 'CONFIRMED', 'RENTED'])
-      .lt('start_date', payload.endDate)
-      .gt('end_date', payload.startDate),
-    supabase
-      .from('rentals')
-      .select('id')
-      .eq('vehicle_id', vehicle.id)
-      .in('status', ['SCHEDULED', 'ACTIVE', 'RETURN_PENDING_REVIEW'])
-      .lt('start_date', payload.endDate)
-      .gt('end_date', payload.startDate),
-    supabase
-      .from('maintenances')
-      .select('id')
-      .eq('vehicle_id', vehicle.id)
-      .in('status', ['SCHEDULED', 'IN_PROGRESS'])
-  ]);
-
-  throwSupabaseError('Gagal memeriksa bentrok reservasi', reservationConflict.error);
-  throwSupabaseError('Gagal memeriksa rental aktif', rentalConflict.error);
-  throwSupabaseError('Gagal memeriksa maintenance', maintenanceConflict.error);
-
-  if (
-    (reservationConflict.data || []).length > 0
-    || (rentalConflict.data || []).length > 0
-    || (maintenanceConflict.data || []).length > 0
-  ) {
-    const error = new Error(
-      'Kendaraan sudah tidak tersedia pada periode tersebut.'
-    );
-    error.status = 409;
-    throw error;
-  }
-
-  const pickupMode = payload.pickupMode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP';
-  let deliveryDistanceKm = null;
-  let deliveryLocation = null;
-
-  if (pickupMode === 'DELIVERY') {
-    const deliveryLatitude = Number(payload.deliveryLatitude);
-    const deliveryLongitude = Number(payload.deliveryLongitude);
-    deliveryDistanceKm = haversineKm(
-      deliveryLatitude,
-      deliveryLongitude,
-      branch.latitude,
-      branch.longitude
-    );
-
-    const radius = company.deliveryRadiusKm || DELIVERY_RADIUS_KM;
-    if (!Number.isFinite(deliveryDistanceKm) || deliveryDistanceKm > radius) {
-      const error = new Error(
-        `Lokasi delivery harus berada maksimal ${radius} km dari cabang.`
-      );
-      error.status = 400;
-      throw error;
-    }
-
-    if (!payload.deliveryAddress || !payload.recipientPhone) {
-      const error = new Error(
-        'Alamat delivery dan nomor penerima wajib diisi.'
-      );
-      error.status = 400;
-      throw error;
-    }
-
-    deliveryLocation = `SRID=4326;POINT(${deliveryLongitude} ${deliveryLatitude})`;
-  }
-
-  const days = rentalDays(payload.startDate, payload.endDate);
-  const rentalAmount = Number(vehicle.price_per_day || 0) * days;
-  const depositAmount = Number(vehicle.deposit_amount || 0);
-  const now = new Date().toISOString();
-
-  const insertPayload = {
-    customer_id: actor.id,
-    company_id: vehicle.company_id,
-    branch_id: vehicle.branch_id,
-    vehicle_id: vehicle.id,
-    start_date: payload.startDate,
-    end_date: payload.endDate,
-    pickup_mode: pickupMode,
-    delivery_address: pickupMode === 'DELIVERY' ? payload.deliveryAddress : null,
-    delivery_location: deliveryLocation,
-    recipient_phone: pickupMode === 'DELIVERY' ? payload.recipientPhone : null,
-    delivery_notes: pickupMode === 'DELIVERY' ? payload.deliveryNotes || null : null,
-    delivery_distance_km: deliveryDistanceKm === null ? null : Number(deliveryDistanceKm.toFixed(2)),
-    rental_days: days,
-    rental_amount: rentalAmount,
-    deposit_amount: depositAmount,
-    total_amount: rentalAmount + depositAmount,
-    status: 'PENDING_PAYMENT',
-    expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
-    created_at: now
-  };
-
-  const { data, error } = await supabase
-    .from('reservations')
-    .insert(insertPayload)
-    .select(reservationSelect)
-    .single();
-
-  throwSupabaseError('Gagal membuat reservasi', error);
-
-  const context = await loadReservationContext([data]);
-  return mapDbReservation(data, context);
+  dateOnly(payload.startDate); dateOnly(payload.endDate);
+  const result = await rentalTransaction(actor, 'RESERVE', payload);
+  const context = await loadReservationContext([result.reservation]);
+  return mapDbReservation(result.reservation, context);
 };
 
 export const createReservation = (actor, payload) => (
@@ -1545,12 +1221,17 @@ export const createReservation = (actor, payload) => (
     : createReservationDemo(actor, payload)
 );
 
-const simulatePaymentDemo = (actor, reservationId) => {
+const simulatePaymentDemo = (actor, reservationId, approvedOrder) => {
   const reservation = demoState.reservations.find((item) => item.id === reservationId);
   if (!reservation || (actor.role === 'CUSTOMER' && reservation.customerId !== actor.id)) {
     const error = new Error('Reservasi tidak ditemukan.');
     error.status = 404;
     throw error;
+  }
+  if (actor.role !== 'CUSTOMER') throw Object.assign(new Error('Hanya customer pemilik transaksi yang dapat membayar.'), { status: 403 });
+  if (['CONFIRMED', 'RENTED', 'COMPLETED'].includes(reservation.status)) {
+    const payment = demoState.payments.find((item) => item.reservationId === reservationId && item.status === 'PAID');
+    if (payment) return { reservation, payment };
   }
   if (reservation.status !== 'PENDING_PAYMENT') {
     const error = new Error('Reservasi tidak sedang menunggu pembayaran.');
@@ -1563,12 +1244,10 @@ const simulatePaymentDemo = (actor, reservationId) => {
     error.status = 409;
     throw error;
   }
-  reservation.status = 'CONFIRMED';
-  reservation.paidAt = new Date().toISOString();
-  const paymentRecord = createPaymentRecord({
-    reservationId,
-    amount: reservation.totalAmount
-  });
+  const vehicle = getVehicle(reservation.vehicleId);
+  assertDemoReadiness(vehicle, reservation.customerId);
+  if (!['AVAILABLE','RESERVED'].includes(vehicle.status) || hasActiveRental(vehicle.id)) throw Object.assign(new Error('Kendaraan belum siap untuk pembayaran.'), { status: 409 });
+  const paymentRecord = approvedOrder ? {provider:'INTERNAL_MANUAL',amount:reservation.totalAmount,status:'PAID',paidAt:new Date().toISOString()} : createPaymentRecord({ reservationId, amount: reservation.totalAmount });
   const payment = {
     id: makeId('pay'),
     reservationId,
@@ -1577,111 +1256,27 @@ const simulatePaymentDemo = (actor, reservationId) => {
     status: paymentRecord.status,
     paidAt: paymentRecord.paidAt
   };
+  reservation.status = 'CONFIRMED';
+  reservation.paidAt = payment.paidAt;
   demoState.payments.push(payment);
   return { reservation, payment };
 };
 
 const simulatePaymentFromSupabase = async (actor, reservationId) => {
-  const reservationResult = await supabase
-    .from('reservations')
-    .select(reservationSelect)
-    .eq('id', reservationId)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca reservasi', reservationResult.error);
-
-  const reservation = reservationResult.data;
-  if (!reservation) {
-    const error = new Error('Reservasi tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-
-  if (
-    actor.role === 'CUSTOMER'
-    && reservation.customer_id !== actor.id
-  ) {
-    const error = new Error('Reservasi tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-
-  if (
-    actor.role !== 'CUSTOMER'
-    && actor.role !== 'CENTRAL_ADMIN'
-    && actor.companyId !== reservation.company_id
-  ) {
-    const error = new Error('Akses reservasi tidak diizinkan.');
-    error.status = 403;
-    throw error;
-  }
-
-  if (reservation.status !== 'PENDING_PAYMENT') {
-    const error = new Error(
-      'Reservasi tidak sedang menunggu pembayaran.'
-    );
-    error.status = 409;
-    throw error;
-  }
-
-  if (reservation.expires_at && new Date(reservation.expires_at) <= new Date()) {
-    await supabase
-      .from('reservations')
-      .update({ status: 'EXPIRED' })
-      .eq('id', reservation.id);
-
-    const error = new Error('Batas pembayaran sudah berakhir.');
-    error.status = 409;
-    throw error;
-  }
-
-  const paymentRecord = createPaymentRecord({
-    reservationId: reservation.id,
-    amount: reservation.total_amount
-  });
-  const { paidAt, ...paymentInsert } = paymentRecord;
-  const paymentResult = await supabase
-    .from('payments')
-    .insert(paymentInsert)
-    .select(paymentSelect)
-    .single();
-
-  throwSupabaseError('Gagal menyimpan pembayaran simulasi', paymentResult.error);
-
-  const updatedReservationResult = await supabase
-    .from('reservations')
-    .update({
-      status: 'CONFIRMED',
-      paid_at: paidAt
-    })
-    .eq('id', reservation.id)
-    .select(reservationSelect)
-    .single();
-
-  throwSupabaseError(
-    'Gagal mengonfirmasi reservasi',
-    updatedReservationResult.error
-  );
-
-  const context = await loadReservationContext([updatedReservationResult.data]);
-  return {
-    reservation: mapDbReservation(updatedReservationResult.data, context),
-    payment: {
-      id: paymentResult.data.id,
-      reservationId: paymentResult.data.reservation_id,
-      provider: paymentResult.data.provider,
-      providerReference: paymentResult.data.provider_reference,
-      amount: Number(paymentResult.data.amount || 0),
-      status: paymentResult.data.status,
-      paidAt: paymentResult.data.paid_at,
-      createdAt: paymentResult.data.created_at
-    }
-  };
+  createPaymentRecord({ reservationId, amount: 0 });
+  const result = await rentalTransaction(actor, 'PAY', { reservationId });
+  const context = await loadReservationContext([result.reservation]);
+  return { reservation: mapDbReservation(result.reservation, context), payment: {
+    id: result.payment.id, reservationId: result.payment.reservation_id,
+    provider: result.payment.provider, amount: Number(result.payment.amount),
+    status: result.payment.status, paidAt: result.payment.paid_at
+  } };
 };
 
-export const simulatePayment = (actor, reservationId) => (
+export const simulatePayment = (actor, reservationId, approvedOrder) => (
   supabase
     ? simulatePaymentFromSupabase(actor, reservationId)
-    : simulatePaymentDemo(actor, reservationId)
+    : simulatePaymentDemo(actor, reservationId, approvedOrder)
 );
 
 const assertCompanyAccess = (actor, companyId) => {
@@ -1693,6 +1288,7 @@ const assertCompanyAccess = (actor, companyId) => {
 };
 
 const handoverDemo = (actor, reservationId, payload = {}) => {
+  validateInspection(payload);
   const reservation = demoState.reservations.find((item) => item.id === reservationId);
   if (!reservation) {
     const error = new Error('Reservasi tidak ditemukan.');
@@ -1710,8 +1306,10 @@ const handoverDemo = (actor, reservationId, payload = {}) => {
     error.status = 409;
     throw error;
   }
+  if (internalMode() && (baliToday() < reservation.startDate || baliToday() >= reservation.endDate)) throw Object.assign(new Error('Handover hanya pada periode reservasi (waktu Bali).'), {status:409});
   const vehicle = getVehicle(reservation.vehicleId);
-  if (vehicle.gpsStatus !== 'READY' || vehicle.status === 'MAINTENANCE') {
+  assertDemoReadiness(vehicle, reservation.customerId);
+  if (vehicle.gpsStatus !== 'READY' || !['AVAILABLE', 'RESERVED'].includes(vehicle.status) || hasActiveRental(vehicle.id)) {
     const error = new Error('Kendaraan tidak dapat handover karena GPS tidak siap atau kendaraan maintenance.');
     error.status = 409;
     throw error;
@@ -1751,199 +1349,60 @@ const handoverDemo = (actor, reservationId, payload = {}) => {
   return { rental, inspection };
 };
 
-const createSupabaseInspection = async ({ rentalId, type, actor, payload }) => {
-  const [customerSignaturePath, staffPhotos, customerPhotos] = await Promise.all([
-    uploadDataUrl(payload.customerSignature, {
-      folder: `inspections/${type.toLowerCase()}/signatures`,
-      ownerId: rentalId,
-      fileName: 'customer-signature'
-    }),
-    uploadDataUrls(payload.staffPhotos, {
-      folder: `inspections/${type.toLowerCase()}/staff`,
-      ownerId: rentalId,
-      fileName: 'photo'
-    }),
-    uploadDataUrls(payload.customerPhotos, {
-      folder: `inspections/${type.toLowerCase()}/customer`,
-      ownerId: rentalId,
-      fileName: 'photo'
-    })
+const rentalTransaction = async (actor, action, payload) => {
+  const { data, error } = await supabase.rpc('transrent_transaction_v3', { p_actor: actor.id, p_action: action, p_payload: payload });
+  if (error?.code === 'PGRST202') throw Object.assign(new Error('Migration 015–016 belum tersedia. Jalankan skrip final melalui SQL Editor.'), { status: 503, code: 'MIGRATION_REQUIRED' });
+  if (error && /^PT(400|403|404|409)$/.test(error.code)) throw Object.assign(new Error(error.message), { status: Number(error.code.slice(2)), code: error.code });
+  if (error?.code === '23505') throw Object.assign(new Error('Transaksi bertabrakan dengan data yang sudah ada.'), { status: 409 });
+  throwSupabaseError('Transaksi rental gagal', error);
+  return data;
+};
+
+const prepareInspection = async (actor, subjectId, type, payload) => {
+  validateInspection(payload);
+  if (!['STAFF', 'RENTAL_ADMIN', 'CENTRAL_ADMIN'].includes(actor.role)) throw Object.assign(new Error('Role tidak dapat membuat inspeksi.'), { status: 403 });
+  const source = type === 'BEFORE' ? 'reservations' : 'rentals';
+  const { data, error } = await supabase.from(source).select('id,company_id,status').eq('id', subjectId).maybeSingle();
+  throwSupabaseError('Gagal memeriksa akses inspeksi', error);
+  if (!data) throw Object.assign(new Error('Data inspeksi tidak ditemukan.'), { status: 404 });
+  assertCompanyAccess(actor, data.company_id);
+  if (data.status !== (type === 'BEFORE' ? 'CONFIRMED' : 'ACTIVE')) throw Object.assign(new Error('Status tidak dapat diinspeksi.'), { status: 409 });
+  // Immutable attempt paths preserve earlier evidence when a transaction is retried.
+  const ownerId = `${subjectId}-${randomUUID()}`;
+  const [customerSignature, staffPhotos, customerPhotos] = await Promise.all([
+    uploadDataUrl(payload.customerSignature, { folder: 'inspections', ownerId, fileName: 'signature' }),
+    uploadDataUrls(payload.staffPhotos, { folder: 'inspections', ownerId, fileName: 'staff' }),
+    uploadDataUrls(payload.customerPhotos, { folder: 'inspections', ownerId, fileName: 'customer' })
   ]);
+  return { ...payload, customerSignature, staffPhotos, customerPhotos };
+};
 
-  const { data, error } = await supabase
-    .from('inspections')
-    .insert({
-      rental_id: rentalId,
-      type,
-      staff_id: actor.id,
-      customer_signature_path: customerSignaturePath || null,
-      notes: payload.notes || null,
-      submitted_at: new Date().toISOString()
-    })
-    .select('id,rental_id,type,staff_id,customer_signature_path,notes,submitted_at,reviewed_at')
-    .single();
-
-  throwSupabaseError(`Gagal menyimpan inspeksi ${type}`, error);
-
-  const checklist = Array.isArray(payload.staffChecklist)
-    ? payload.staffChecklist.map((item) => ({
-      inspection_id: data.id,
-      item_key: item,
-      condition: 'OK',
-      notes: null
-    }))
-    : [];
-
-  if (checklist.length > 0) {
-    const itemsResult = await supabase
-      .from('inspection_items')
-      .insert(checklist)
-      .select('id,inspection_id,item_key,condition,notes');
-    throwSupabaseError(`Gagal menyimpan checklist inspeksi ${type}`, itemsResult.error);
+const inspectionTransaction = async (actor, action, payload) => {
+  try { return await rentalTransaction(actor, action, payload); }
+  catch (error) {
+    const paths = [payload.customerSignature, ...(payload.staffPhotos || []), ...(payload.customerPhotos || [])].filter((p) => typeof p === 'string' && p.startsWith('inspections/'));
+    if (paths.length) {
+      const cleanup = await supabase.storage.from(storageInfo.bucket).remove(paths);
+      if (cleanup.error) console.warn('Inspection upload cleanup pending:', paths);
+    }
+    throw error;
   }
+};
 
-  const photos = [
-    ...staffPhotos.map((photo) => ({
-      inspection_id: data.id,
-      source: 'STAFF',
-      storage_path: photo
-    })),
-    ...customerPhotos.map((photo) => ({
-      inspection_id: data.id,
-      source: 'CUSTOMER',
-      storage_path: photo
-    }))
-  ];
-
-  if (photos.length > 0) {
-    const photosResult = await supabase
-      .from('inspection_photos')
-      .insert(photos)
-      .select('id,inspection_id,source,storage_path,created_at');
-    throwSupabaseError(`Gagal menyimpan foto inspeksi ${type}`, photosResult.error);
+const rentalResult = async (result) => {
+  if (result.rental) {
+    const context = await loadRentalContext([result.rental]);
+    result.rental = mapDbRental(result.rental, context);
   }
-
-  return {
-    id: data.id,
-    rentalId: data.rental_id,
-    type: data.type,
-    staffId: data.staff_id,
-    customerSignature: data.customer_signature_path,
-    notes: data.notes,
-    submittedAt: data.submitted_at,
-    reviewedAt: data.reviewed_at,
-    staffChecklist: checklist.map((item) => item.item_key),
-    staffPhotos,
-    customerPhotos
-  };
+  if (result.refund) result.refund = mapDbRefund(result.refund);
+  if (result.fine) result.fine = mapDbFine(result.fine);
+  if (result.dispute) result.dispute = mapDbDispute(result.dispute);
+  return result;
 };
 
 const handoverFromSupabase = async (actor, reservationId, payload = {}) => {
-  if (!['STAFF', 'RENTAL_ADMIN', 'CENTRAL_ADMIN'].includes(actor.role)) {
-    const error = new Error('Role tidak dapat melakukan handover.');
-    error.status = 403;
-    throw error;
-  }
-
-  const reservationResult = await supabase
-    .from('reservations')
-    .select(reservationSelect)
-    .eq('id', reservationId)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca reservasi handover', reservationResult.error);
-
-  const reservation = reservationResult.data;
-  if (!reservation) {
-    const error = new Error('Reservasi tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-  assertCompanyAccess(actor, reservation.company_id);
-
-  if (reservation.status !== 'CONFIRMED') {
-    const error = new Error('Reservasi belum siap untuk handover.');
-    error.status = 409;
-    throw error;
-  }
-
-  const vehicleResult = await supabase
-    .from('vehicles')
-    .select(vehicleSelect)
-    .eq('id', reservation.vehicle_id)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca kendaraan handover', vehicleResult.error);
-
-  const vehicle = vehicleResult.data;
-  if (!vehicle || vehicle.status === 'MAINTENANCE' || vehicle.gps_status !== 'READY') {
-    const error = new Error(
-      'Kendaraan tidak dapat handover karena GPS tidak siap atau kendaraan maintenance.'
-    );
-    error.status = 409;
-    throw error;
-  }
-
-  const gpsAgreement = await getActiveGpsAgreement(reservation.company_id);
-  if (!gpsAgreement) {
-    const error = new Error('Perusahaan rental belum memiliki MoU GPS aktif. Handover tidak dapat dilakukan.');
-    error.status = 409;
-    error.code = 'GPS_AGREEMENT_REQUIRED';
-    throw error;
-  }
-
-  const now = new Date().toISOString();
-  const rentalResult = await supabase
-    .from('rentals')
-    .insert({
-      reservation_id: reservation.id,
-      customer_id: reservation.customer_id,
-      company_id: reservation.company_id,
-      branch_id: reservation.branch_id,
-      vehicle_id: reservation.vehicle_id,
-      start_date: reservation.start_date,
-      end_date: reservation.end_date,
-      status: 'ACTIVE',
-      handover_at: now,
-      created_at: now
-    })
-    .select(rentalSelect)
-    .single();
-  throwSupabaseError('Gagal membuat rental', rentalResult.error);
-
-  const reservationUpdate = await supabase
-    .from('reservations')
-    .update({ status: 'RENTED' })
-    .eq('id', reservation.id);
-  throwSupabaseError('Gagal memperbarui status reservasi', reservationUpdate.error);
-
-  const vehicleUpdate = await supabase
-    .from('vehicles')
-    .update({ status: 'RENTED' })
-    .eq('id', vehicle.id);
-  throwSupabaseError('Gagal memperbarui status kendaraan', vehicleUpdate.error);
-
-  const inspection = await createSupabaseInspection({
-    rentalId: rentalResult.data.id,
-    type: 'BEFORE',
-    actor,
-    payload
-  });
-
-  return {
-    rental: {
-      id: rentalResult.data.id,
-      reservationId: rentalResult.data.reservation_id,
-      customerId: rentalResult.data.customer_id,
-      companyId: rentalResult.data.company_id,
-      branchId: rentalResult.data.branch_id,
-      vehicleId: rentalResult.data.vehicle_id,
-      startDate: rentalResult.data.start_date,
-      endDate: rentalResult.data.end_date,
-      status: rentalResult.data.status,
-      handoverAt: rentalResult.data.handover_at,
-      createdAt: rentalResult.data.created_at
-    },
-    inspection
-  };
+  const inspection = await prepareInspection(actor, reservationId, 'BEFORE', payload);
+  return rentalResult(await inspectionTransaction(actor, 'HANDOVER', { ...inspection, reservationId }));
 };
 
 export const handover = (actor, reservationId, payload = {}) => (
@@ -1955,14 +1414,18 @@ export const handover = (actor, reservationId, payload = {}) => (
 const computeFine = (rental, payload) => {
   const items = Array.isArray(payload.damageItems) ? payload.damageItems : [];
   const damageTotal = items.reduce((total, item) => total + Number(item.amount || 0), 0);
-  const actualReturnDate = payload.actualReturnDate || rental.endDate;
-  const lateDays = Math.max(0, rentalDays(rental.endDate, actualReturnDate) - 1);
+  const actualReturnDate = payload.actualReturnDate || (internalMode() ? baliToday() : rental.endDate);
+  if (internalMode() && actualReturnDate !== baliToday()) badRequest('Tanggal return harus hari ini (waktu Bali).');
+  const lateDays = Math.max(0, Math.ceil((dateOnly(actualReturnDate) - dateOnly(rental.endDate)) / 86_400_000));
   const vehicle = getVehicle(rental.vehicleId);
-  const lateTotal = lateDays * Math.round(vehicle.pricePerDay * 0.25);
+  const reservation = demoState.reservations.find(s=>s.id===rental.reservationId);
+  const lateTotal = lateDays * Math.round((internalMode() ? reservation.rentalAmount / reservation.rentalDays : vehicle.pricePerDay) * 0.25);
   return { items, damageTotal, lateDays, lateTotal, total: damageTotal + lateTotal };
 };
 
 const returnRentalDemo = (actor, rentalId, payload = {}) => {
+  validateInspection(payload);
+  validateReturn(payload);
   const rental = demoState.rentals.find((item) => item.id === rentalId);
   if (!rental) {
     const error = new Error('Rental tidak ditemukan.');
@@ -1993,9 +1456,11 @@ const returnRentalDemo = (actor, rentalId, payload = {}) => {
     submittedAt: new Date().toISOString(),
     reviewedAt: null
   };
-  demoState.inspections.push(inspection);
+  if (payload.actualReturnDate && dateOnly(payload.actualReturnDate) < dateOnly(rental.startDate)) badRequest('Tanggal return sebelum rental dimulai.');
   const fine = computeFine(rental, payload);
-  if (fine.total > 0) {
+  if (!Number.isFinite(fine.total) || fine.total > 999999999999) badRequest('Total denda melebihi batas.');
+  demoState.inspections.push(inspection);
+  if (fine.total > 0 || fine.items.length > 0) {
     demoState.fines.push({
       id: makeId('fine'),
       rentalId: rental.id,
@@ -2009,182 +1474,28 @@ const returnRentalDemo = (actor, rentalId, payload = {}) => {
   const reservation = demoState.reservations.find((item) => item.id === rental.reservationId);
   rental.status = 'RETURN_PENDING_REVIEW';
   rental.returnedAt = new Date().toISOString();
+  rental.actualReturnDate = payload.actualReturnDate || (internalMode() ? baliToday() : rental.endDate);
   rental.returnMethod = payload.returnMethod || 'SELF_RETURN';
   rental.returnSchedule = payload.returnSchedule || null;
   const vehicle = getVehicle(rental.vehicleId);
   vehicle.status = 'RETURN_INSPECTION';
+  vehicle.repairRequired = vehicle.repairRequired || fine.items.length > 0;
   const refundAmount = Math.max(0, (reservation?.depositAmount || 0) - fine.total);
   demoState.refunds.push({
     id: makeId('refund'),
     rentalId: rental.id,
     amount: refundAmount,
     status: 'PENDING_CONFIRMATION',
+    provider: internalMode() ? 'INTERNAL_MANUAL' : 'SIMULATED_GATEWAY',
     createdAt: new Date().toISOString()
   });
   return { rental, inspection, fine, refundAmount };
 };
 
-const computeSupabaseFine = (vehicle, rental, payload) => {
-  const items = Array.isArray(payload.damageItems) ? payload.damageItems : [];
-  const damageTotal = items.reduce(
-    (total, item) => total + Number(item.amount || 0),
-    0
-  );
-  const actualReturnDate = payload.actualReturnDate || rental.end_date;
-  const endDate = dateOnly(rental.end_date);
-  const actualDate = dateOnly(actualReturnDate);
-  const lateDays = Math.max(
-    0,
-    Math.ceil((actualDate.getTime() - endDate.getTime()) / 86_400_000)
-  );
-  const lateTotal = lateDays * Math.round(Number(vehicle.price_per_day || 0) * 0.25);
-
-  return {
-    items,
-    damageTotal,
-    lateDays,
-    lateTotal,
-    total: damageTotal + lateTotal
-  };
-};
-
 const returnRentalFromSupabase = async (actor, rentalId, payload = {}) => {
-  if (!['STAFF', 'RENTAL_ADMIN', 'CENTRAL_ADMIN'].includes(actor.role)) {
-    const error = new Error('Role tidak dapat melakukan return.');
-    error.status = 403;
-    throw error;
-  }
-
-  const rentalResult = await supabase
-    .from('rentals')
-    .select(rentalSelect)
-    .eq('id', rentalId)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca rental return', rentalResult.error);
-
-  const rental = rentalResult.data;
-  if (!rental) {
-    const error = new Error('Rental tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-  assertCompanyAccess(actor, rental.company_id);
-
-  if (rental.status !== 'ACTIVE') {
-    const error = new Error('Rental tidak sedang aktif.');
-    error.status = 409;
-    throw error;
-  }
-
-  const [vehicleResult, reservationResult] = await Promise.all([
-    supabase
-      .from('vehicles')
-      .select(vehicleSelect)
-      .eq('id', rental.vehicle_id)
-      .maybeSingle(),
-    supabase
-      .from('reservations')
-      .select(reservationSelect)
-      .eq('id', rental.reservation_id)
-      .maybeSingle()
-  ]);
-
-  throwSupabaseError('Gagal membaca kendaraan return', vehicleResult.error);
-  throwSupabaseError('Gagal membaca reservasi return', reservationResult.error);
-
-  if (!vehicleResult.data || !reservationResult.data) {
-    const error = new Error('Data kendaraan atau reservasi tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-
-  const now = new Date().toISOString();
-  const inspection = await createSupabaseInspection({
-    rentalId,
-    type: 'AFTER',
-    actor,
-    payload
-  });
-  const fine = computeSupabaseFine(vehicleResult.data, rental, payload);
-
-  let fineRow = null;
-  if (fine.total > 0) {
-    const fineResult = await supabase
-      .from('fines')
-      .insert({
-        rental_id: rental.id,
-        amount: fine.total,
-        status: 'ISSUED',
-        damage_items: fine.items,
-        created_at: now
-      })
-      .select('id,rental_id,amount,status,damage_items,created_at')
-      .single();
-    throwSupabaseError('Gagal menyimpan denda', fineResult.error);
-    fineRow = mapDbFine(fineResult.data);
-  }
-
-  const rentalUpdate = await supabase
-    .from('rentals')
-    .update({
-      status: 'RETURN_PENDING_REVIEW',
-      returned_at: now,
-      return_method: payload.returnMethod || 'SELF_RETURN',
-      return_schedule: payload.returnSchedule || null
-    })
-    .eq('id', rental.id)
-    .select(rentalSelect)
-    .single();
-  throwSupabaseError('Gagal memperbarui status rental return', rentalUpdate.error);
-
-  const vehicleUpdate = await supabase
-    .from('vehicles')
-    .update({ status: 'RETURN_INSPECTION' })
-    .eq('id', vehicleResult.data.id);
-  throwSupabaseError('Gagal memperbarui status kendaraan return', vehicleUpdate.error);
-
-  const refundAmount = Math.max(
-    0,
-    Number(reservationResult.data.deposit_amount || 0) - fine.total
-  );
-  const refundResult = await supabase
-    .from('refunds')
-    .upsert({
-      rental_id: rental.id,
-      amount: refundAmount,
-      status: 'PENDING_CONFIRMATION',
-      created_at: now
-    }, { onConflict: 'rental_id' })
-    .select('id,rental_id,amount,status,confirmed_by,created_at,confirmed_at')
-    .single();
-  throwSupabaseError('Gagal menyimpan refund', refundResult.error);
-
-  return {
-    rental: {
-      id: rentalUpdate.data.id,
-      reservationId: rentalUpdate.data.reservation_id,
-      customerId: rentalUpdate.data.customer_id,
-      companyId: rentalUpdate.data.company_id,
-      branchId: rentalUpdate.data.branch_id,
-      vehicleId: rentalUpdate.data.vehicle_id,
-      startDate: rentalUpdate.data.start_date,
-      endDate: rentalUpdate.data.end_date,
-      status: rentalUpdate.data.status,
-      returnedAt: rentalUpdate.data.returned_at,
-      returnMethod: rentalUpdate.data.return_method,
-      returnSchedule: rentalUpdate.data.return_schedule,
-      createdAt: rentalUpdate.data.created_at
-    },
-    inspection,
-    fine: fineRow || {
-      amount: 0,
-      total: 0,
-      items: [],
-      lateDays: fine.lateDays
-    },
-    refundAmount,
-    refund: mapDbRefund(refundResult.data)
-  };
+  validateReturn(payload);
+  const inspection = await prepareInspection(actor, rentalId, 'AFTER', payload);
+  return rentalResult(await inspectionTransaction(actor, 'RETURN', { ...inspection, rentalId }));
 };
 
 export const returnRental = (actor, rentalId, payload = {}) => (
@@ -2208,116 +1519,33 @@ const confirmRefundDemo = (actor, rentalId) => {
   }
   const refund = demoState.refunds.find((item) => item.rentalId === rentalId);
   const vehicle = getVehicle(rental.vehicleId);
+  if (rental.status === 'COMPLETED' && refund?.status === 'APPROVED') return { rental, refund };
+  if (rental.status === 'RETURN_PENDING_REVIEW' && refund?.status === 'APPROVED') return { rental, refund };
+  if (rental.status !== 'RETURN_PENDING_REVIEW' || refund?.status !== 'PENDING_CONFIRMATION') {
+    throw Object.assign(new Error('Return dan refund harus menunggu konfirmasi.'), { status: 409 });
+  }
+  if (demoSettlement(rental).disputed) {
+    throw Object.assign(new Error('Selesaikan sengketa denda sebelum refund.'), { status: 409 });
+  }
+  const settlement = demoSettlement(rental);
+  if (settlement.balanceDue > 0) throw Object.assign(new Error('Selisih denda harus dilunasi sebelum menutup rental.'), { status: 409 });
+  refund.amount = settlement.refundAmount;
+  if (internalMode() && refund.amount>0) { refund.status='APPROVED'; refund.provider='INTERNAL_MANUAL'; refund.confirmedBy=actor.id; refund.confirmedAt=new Date().toISOString(); demoState.fines.filter(f=>f.rentalId===rentalId&&f.status!=='CANCELLED').forEach(f=>{f.status='APPROVED';}); return {rental,refund}; }
   rental.status = 'COMPLETED';
+  const reservation = demoState.reservations.find((item) => item.id === rental.reservationId);
+  if (reservation) reservation.status = 'COMPLETED';
   rental.completedAt = new Date().toISOString();
-  vehicle.status = 'AVAILABLE';
+  const damaged = demoState.fines.some((fine) => fine.rentalId === rentalId && (fine.damageItems || []).length > 0);
+  const maintenance = demoState.maintenances.some((item) => item.vehicleId === vehicle.id && ['SCHEDULED', 'IN_PROGRESS'].includes(item.status));
+  vehicle.status = vehicle.repairRequired || damaged || maintenance || vehicle.gpsStatus !== 'READY' ? 'MAINTENANCE' : 'AVAILABLE';
   if (refund) {
-    refund.status = 'APPROVED_SIMULATED';
+    refund.status = 'APPROVED';
     refund.confirmedAt = new Date().toISOString();
   }
   return { rental, refund };
 };
 
-const confirmRefundFromSupabase = async (actor, rentalId) => {
-  if (!['RENTAL_ADMIN', 'CENTRAL_ADMIN'].includes(actor.role)) {
-    const error = new Error(
-      'Hanya Admin Rental yang dapat mengonfirmasi refund.'
-    );
-    error.status = 403;
-    throw error;
-  }
-
-  const rentalResult = await supabase
-    .from('rentals')
-    .select(rentalSelect)
-    .eq('id', rentalId)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca rental refund', rentalResult.error);
-
-  const rental = rentalResult.data;
-  if (!rental) {
-    const error = new Error('Rental tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-  assertCompanyAccess(actor, rental.company_id);
-
-  const [refundResult, fineResult] = await Promise.all([
-    supabase
-      .from('refunds')
-      .select('id,rental_id,amount,status,confirmed_by,created_at,confirmed_at')
-      .eq('rental_id', rental.id)
-      .maybeSingle(),
-    supabase
-      .from('fines')
-      .select('id,rental_id,amount,status,damage_items,created_at')
-      .eq('rental_id', rental.id)
-      .order('created_at', { ascending: false })
-      .limit(1)
-  ]);
-
-  throwSupabaseError('Gagal membaca refund', refundResult.error);
-  throwSupabaseError('Gagal membaca denda refund', fineResult.error);
-
-  if (!refundResult.data) {
-    const error = new Error('Refund belum tersedia untuk rental ini.');
-    error.status = 409;
-    throw error;
-  }
-
-  const now = new Date().toISOString();
-  const refundUpdate = await supabase
-    .from('refunds')
-    .update({
-      status: 'APPROVED',
-      confirmed_by: actor.id,
-      confirmed_at: now
-    })
-    .eq('id', refundResult.data.id)
-    .select('id,rental_id,amount,status,confirmed_by,created_at,confirmed_at')
-    .single();
-  throwSupabaseError('Gagal mengonfirmasi refund', refundUpdate.error);
-
-  const hasDamage = Boolean(
-    fineResult.data?.[0]?.damage_items
-    && fineResult.data[0].damage_items.length > 0
-  );
-  const vehicleStatus = hasDamage ? 'MAINTENANCE' : 'AVAILABLE';
-
-  const rentalUpdate = await supabase
-    .from('rentals')
-    .update({
-      status: 'COMPLETED',
-      completed_at: now
-    })
-    .eq('id', rental.id)
-    .select(rentalSelect)
-    .single();
-  throwSupabaseError('Gagal menyelesaikan rental', rentalUpdate.error);
-
-  const vehicleUpdate = await supabase
-    .from('vehicles')
-    .update({ status: vehicleStatus })
-    .eq('id', rental.vehicle_id);
-  throwSupabaseError('Gagal memperbarui status kendaraan setelah refund', vehicleUpdate.error);
-
-  return {
-    rental: {
-      id: rentalUpdate.data.id,
-      reservationId: rentalUpdate.data.reservation_id,
-      customerId: rentalUpdate.data.customer_id,
-      companyId: rentalUpdate.data.company_id,
-      branchId: rentalUpdate.data.branch_id,
-      vehicleId: rentalUpdate.data.vehicle_id,
-      startDate: rentalUpdate.data.start_date,
-      endDate: rentalUpdate.data.end_date,
-      status: rentalUpdate.data.status,
-      completedAt: rentalUpdate.data.completed_at
-    },
-    refund: mapDbRefund(refundUpdate.data),
-    vehicleStatus
-  };
-};
+const confirmRefundFromSupabase = async (actor, rentalId) => rentalResult(await rentalTransaction(actor, 'REFUND', { rentalId }));
 
 export const confirmRefund = (actor, rentalId) => (
   supabase
@@ -2325,7 +1553,8 @@ export const confirmRefund = (actor, rentalId) => (
     : confirmRefundDemo(actor, rentalId)
 );
 
-const submitDisputeDemo = (actor, fineId, payload) => {
+const submitDisputeDemo = (actor, fineId, payload = {}) => {
+  const reason = requiredReason(payload?.reason);
   const fine = demoState.fines.find((item) => item.id === fineId);
   const rental = fine && demoState.rentals.find((item) => item.id === fine.rentalId);
   if (!fine || !rental || rental.customerId !== actor.id) {
@@ -2333,12 +1562,16 @@ const submitDisputeDemo = (actor, fineId, payload) => {
     error.status = 404;
     throw error;
   }
+  if (actor.role !== 'CUSTOMER') throw Object.assign(new Error('Hanya customer dapat mengajukan sengketa.'), { status: 403 });
+  if (rental.finePayment || rental.status !== 'RETURN_PENDING_REVIEW' || !['ISSUED', 'ADJUSTED'].includes(fine.status)) throw Object.assign(new Error('Denda tidak dapat disengketakan.'), { status: 409 });
+  if ((demoState.paymentOrders||[]).some(o=>o.rentalId===rental.id&&o.status==='DECLARED'&&new Date(o.expiresAt)>new Date())) throw Object.assign(new Error('Pembayaran sedang diperiksa admin.'),{status:409});
+  (demoState.paymentOrders||[]).filter(o=>o.rentalId===rental.id&&o.status==='PENDING').forEach(o=>{o.status='CANCELLED';});
   fine.status = 'DISPUTED';
   const dispute = {
     id: makeId('dispute'),
     fineId,
     customerId: actor.id,
-    reason: payload.reason || '',
+    reason,
     status: 'OPEN',
     createdAt: new Date().toISOString()
   };
@@ -2347,66 +1580,8 @@ const submitDisputeDemo = (actor, fineId, payload) => {
 };
 
 const submitDisputeFromSupabase = async (actor, fineId, payload = {}) => {
-  if (actor.role !== 'CUSTOMER') {
-    const error = new Error('Hanya customer yang dapat mengajukan keberatan.');
-    error.status = 403;
-    throw error;
-  }
-
-  const fineResult = await supabase
-    .from('fines')
-    .select('id,rental_id,amount,status,damage_items,created_at')
-    .eq('id', fineId)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca denda', fineResult.error);
-
-  if (!fineResult.data) {
-    const error = new Error('Denda tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-
-  const rentalResult = await supabase
-    .from('rentals')
-    .select('id,customer_id')
-    .eq('id', fineResult.data.rental_id)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca rental denda', rentalResult.error);
-
-  if (!rentalResult.data || rentalResult.data.customer_id !== actor.id) {
-    const error = new Error('Denda tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-
-  const disputeResult = await supabase
-    .from('fine_disputes')
-    .insert({
-      fine_id: fineId,
-      customer_id: actor.id,
-      reason: payload.reason || '',
-      status: 'OPEN'
-    })
-    .select('id,fine_id,customer_id,reason,status,created_at,resolved_at')
-    .single();
-  throwSupabaseError('Gagal menyimpan keberatan denda', disputeResult.error);
-
-  const fineUpdate = await supabase
-    .from('fines')
-    .update({ status: 'DISPUTED' })
-    .eq('id', fineId);
-  throwSupabaseError('Gagal memperbarui status denda', fineUpdate.error);
-
-  const dispute = disputeResult.data;
-  return {
-    id: dispute.id,
-    fineId: dispute.fine_id,
-    customerId: dispute.customer_id,
-    reason: dispute.reason,
-    status: dispute.status,
-    createdAt: dispute.created_at,
-    resolvedAt: dispute.resolved_at
-  };
+  const { dispute } = await rentalTransaction(actor, 'DISPUTE', { fineId, reason: requiredReason(payload?.reason) });
+  return mapDbDispute(dispute);
 };
 
 export const submitDispute = (actor, fineId, payload) => (
@@ -2496,13 +1671,14 @@ export const updateVerification = async (actor, customerId, status) => {
   return getPublicUser(customer);
 };
 
-const listLocationsDemo = (actor, vehicleId) => {
+const listLocationsDemo = async (actor, vehicleId) => {
   const vehicle = getVehicle(vehicleId);
   if (!vehicle) {
     const error = new Error('Kendaraan tidak ditemukan.');
     error.status = 404;
     throw error;
   }
+  if (actor.role === 'CUSTOMER' && !await getActiveGpsAgreement(vehicle.companyId)) throw Object.assign(new Error('Izin GPS tidak aktif.'),{status:403});
   if (actor.role === 'CUSTOMER') {
     const activeRental = demoState.rentals.find((rental) => rental.vehicleId === vehicleId && rental.customerId === actor.id && rental.status === 'ACTIVE');
     if (!activeRental) {
@@ -2515,7 +1691,7 @@ const listLocationsDemo = (actor, vehicleId) => {
     error.status = 403;
     throw error;
   }
-  return demoState.locations.filter((location) => location.vehicleId === vehicleId).sort((a, b) => new Date(a.recordedAt) - new Date(b.recordedAt));
+  return demoState.locations.filter((location) => location.vehicleId === vehicleId && (actor.role !== 'CUSTOMER' || demoState.rentals.some((rental) => rental.id === location.rentalId && rental.customerId === actor.id && rental.status === 'ACTIVE'))).sort((a, b) => new Date(a.recordedAt) - new Date(b.recordedAt));
 };
 
 const listLocationsFromSupabase = async (actor, vehicleId) => {
@@ -2533,6 +1709,8 @@ const listLocationsFromSupabase = async (actor, vehicleId) => {
     throw error;
   }
 
+  if (actor.role === 'CUSTOMER' && !await getActiveGpsAgreement(vehicle.company_id)) throw Object.assign(new Error('Izin GPS tidak aktif.'),{status:403});
+  let allowedRentalIds = null;
   if (actor.role === 'CUSTOMER') {
     const rentalResult = await supabase
       .from('rentals')
@@ -2542,7 +1720,8 @@ const listLocationsFromSupabase = async (actor, vehicleId) => {
       .eq('status', 'ACTIVE')
       .limit(1);
     throwSupabaseError('Gagal memeriksa akses tracking customer', rentalResult.error);
-    if ((rentalResult.data || []).length === 0) {
+    allowedRentalIds = (rentalResult.data || []).map((row) => row.id);
+    if (allowedRentalIds.length === 0) {
       const error = new Error(
         'Customer hanya dapat melihat GPS rental aktif miliknya.'
       );
@@ -2553,11 +1732,13 @@ const listLocationsFromSupabase = async (actor, vehicleId) => {
     assertCompanyAccess(actor, vehicle.company_id);
   }
 
-  const locationsResult = await supabase
+  let locationsQuery = supabase
     .from('vehicle_locations')
     .select('id,vehicle_id,rental_id,location,speed,heading,recorded_at')
     .eq('vehicle_id', vehicleId)
     .order('recorded_at', { ascending: true });
+  if (allowedRentalIds) locationsQuery = locationsQuery.in('rental_id', allowedRentalIds);
+  const locationsResult = await locationsQuery;
   throwSupabaseError('Gagal membaca histori lokasi', locationsResult.error);
 
   return (locationsResult.data || []).map(mapDbLocation);
@@ -2569,19 +1750,19 @@ export const listLocations = (actor, vehicleId) => (
     : listLocationsDemo(actor, vehicleId)
 );
 
-const trackingVehiclesDemo = (actor) => listRentalsDemo(actor)
-  .filter((rental) => rental.status === 'ACTIVE')
+const trackingVehiclesDemo = async (actor) => { const rows=listRentalsDemo(actor).filter(r=>r.status==='ACTIVE'); const allowed=await Promise.all(rows.map(r=>getActiveGpsAgreement(r.companyId))); return rows.filter((r,i)=>allowed[i])
   .map((rental) => ({
     rentalId: rental.id,
     vehicle: rental.vehicle,
     customer: rental.customer,
     latestLocation: rental.latestLocation
-  }));
+  })); };
 
 const trackingVehiclesFromSupabase = async (actor) => {
   const rentals = await listRentalsFromSupabase(actor);
+  const allowed=await Promise.all(rentals.map(r=>getActiveGpsAgreement(r.companyId)));
   return rentals
-    .filter((rental) => rental.status === 'ACTIVE')
+    .filter((rental,i) => rental.status === 'ACTIVE' && allowed[i])
     .map((rental) => ({
       rentalId: rental.id,
       vehicle: rental.vehicle,
@@ -2596,13 +1777,14 @@ export const trackingVehicles = (actor) => (
     : trackingVehiclesDemo(actor)
 );
 
-const ingestLocationDemo = ({ deviceId, latitude, longitude, speed = 0, heading = 0 }) => {
+const ingestLocationDemo = async ({ deviceId, latitude, longitude, speed = 0, heading = 0 }) => {
   const vehicle = demoState.vehicles.find((item) => item.gpsDeviceId === deviceId);
   if (!vehicle) {
     const error = new Error('GPS device tidak terdaftar.');
     error.status = 404;
     throw error;
   }
+  if (!await getActiveGpsAgreement(vehicle.companyId)) throw Object.assign(new Error('Izin GPS/perusahaan tidak aktif.'),{status:403});
   if (vehicle.gpsStatus !== 'READY') {
     const error = new Error('GPS device tidak berstatus READY.');
     error.status = 409;
@@ -2681,7 +1863,7 @@ const ingestLocationFromSupabase = async ({ deviceId, latitude, longitude, speed
 
   const vehicleResult = await supabase
     .from('vehicles')
-    .select('id,gps_status')
+    .select('id,gps_status,company_id')
     .eq('gps_device_id', device.id)
     .limit(2);
   throwSupabaseError('Gagal membaca kendaraan GPS', vehicleResult.error);
@@ -2702,6 +1884,7 @@ const ingestLocationFromSupabase = async ({ deviceId, latitude, longitude, speed
     throw error;
   }
 
+  if (!await getActiveGpsAgreement(vehicle.company_id)) throw Object.assign(new Error('Izin GPS/perusahaan tidak aktif.'),{status:403});
   const rentalResult = await supabase
     .from('rentals')
     .select('id')
@@ -2717,35 +1900,14 @@ const ingestLocationFromSupabase = async ({ deviceId, latitude, longitude, speed
     throw error;
   }
 
-  const recordedAt = new Date().toISOString();
-  const locationResult = await supabase
-    .from('vehicle_locations')
-    .insert({
-      vehicle_id: vehicle.id,
-      rental_id: activeRental.id,
-      location: `SRID=4326;POINT(${lng} ${lat})`,
-      speed: Number(speed || 0),
-      heading: Number(heading || 0),
-      recorded_at: recordedAt
-    })
-    .select('id,vehicle_id,rental_id,location,speed,heading,recorded_at')
-    .single();
-  throwSupabaseError('Gagal menyimpan lokasi GPS', locationResult.error);
-
-  const deviceUpdate = await supabase
-    .from('gps_devices')
-    .update({ last_seen_at: recordedAt })
-    .eq('id', device.id);
-  throwSupabaseError('Gagal memperbarui waktu GPS', deviceUpdate.error);
-
-  return mapDbLocation(locationResult.data);
+  const {rpc}=await import('../operations.js');
+  return mapDbLocation(await rpc('transrent_gps',{p_vehicle:vehicle.id,p_lat:lat,p_lng:lng,p_speed:Number(speed),p_heading:Number(heading)}));
 };
 
-export const ingestLocation = (payload) => (
-  supabase
-    ? ingestLocationFromSupabase(payload)
-    : ingestLocationDemo(payload)
-);
+export const ingestLocation = (payload={}) => {
+  if(!payload || !Number.isFinite(Number(payload.latitude)) || !Number.isFinite(Number(payload.longitude)) || Math.abs(Number(payload.latitude))>90 || Math.abs(Number(payload.longitude))>180 || !Number.isFinite(Number(payload.speed||0)) || Number(payload.speed||0)<0 || !Number.isFinite(Number(payload.heading||0)) || Number(payload.heading||0)<0 || Number(payload.heading||0)>=360) badRequest('Koordinat/kecepatan/arah GPS tidak valid.');
+  return supabase ? ingestLocationFromSupabase(payload) : ingestLocationDemo(payload);
+};
 
 const gpsDiagnosticsDemo = (actor) => {
   const devices = demoState.vehicles
@@ -2938,6 +2100,8 @@ const createMaintenanceDemo = (actor, payload) => {
     error.status = 403;
     throw error;
   }
+  if (hasActiveRental(vehicle.id) || vehicle.status === 'INACTIVE') throw Object.assign(new Error('Kendaraan masih memiliki rental aktif atau dinonaktifkan.'), { status: 409 });
+  if (!['SERVICE','REPAIR'].includes(payload.type || 'SERVICE')) badRequest('Jenis maintenance harus SERVICE atau REPAIR.');
   const maintenance = {
     id: makeId('mnt'),
     vehicleId: vehicle.id,
@@ -2952,66 +2116,12 @@ const createMaintenanceDemo = (actor, payload) => {
   return maintenance;
 };
 
-const createMaintenanceFromSupabase = async (actor, payload) => {
-  if (!['RENTAL_ADMIN', 'CENTRAL_ADMIN'].includes(actor.role)) {
-    const error = new Error('Role tidak dapat membuat maintenance.');
-    error.status = 403;
-    throw error;
-  }
-
-  const vehicleResult = await supabase
-    .from('vehicles')
-    .select(vehicleSelect)
-    .eq('id', payload.vehicleId)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca kendaraan maintenance', vehicleResult.error);
-
-  const vehicle = vehicleResult.data;
-  if (!vehicle) {
-    const error = new Error('Kendaraan tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-  assertCompanyAccess(actor, vehicle.company_id);
-
-  const now = new Date().toISOString();
-  const maintenanceResult = await supabase
-    .from('maintenances')
-    .insert({
-      company_id: vehicle.company_id,
-      branch_id: vehicle.branch_id,
-      vehicle_id: vehicle.id,
-      type: payload.type || 'SERVICE',
-      title: payload.title || 'Maintenance kendaraan',
-      status: 'SCHEDULED',
-      scheduled_at: payload.scheduledAt || now,
-      notes: payload.notes || null,
-      created_at: now
-    })
-    .select('id,company_id,branch_id,vehicle_id,type,title,status,scheduled_at,completed_at,notes,created_at')
-    .single();
-  throwSupabaseError('Gagal membuat maintenance', maintenanceResult.error);
-
-  const vehicleUpdate = await supabase
-    .from('vehicles')
-    .update({ status: 'MAINTENANCE' })
-    .eq('id', vehicle.id);
-  throwSupabaseError('Gagal menonaktifkan kendaraan untuk maintenance', vehicleUpdate.error);
-
-  const context = await loadReservationContext([{
-    vehicle_id: vehicle.id,
-    branch_id: vehicle.branch_id,
-    company_id: vehicle.company_id,
-    customer_id: null
-  }]);
-
-  return mapDbMaintenance(
-    maintenanceResult.data,
-    context.vehicles.get(vehicle.id),
-    context.branches.get(vehicle.branch_id) || null,
-    context.companies.get(vehicle.company_id) || null
-  );
+const maintenanceResult = async (result) => {
+  const row = result.maintenance;
+  const context = await loadReservationContext([row]);
+  return mapDbMaintenance(row, context.vehicles.get(row.vehicle_id), context.branches.get(row.branch_id), context.companies.get(row.company_id));
 };
+const createMaintenanceFromSupabase = async (actor, payload) => maintenanceResult(await rentalTransaction(actor, 'MAINTENANCE', payload));
 
 export const createMaintenance = (actor, payload) => (
   supabase
@@ -3032,11 +2142,11 @@ const assertMaintenanceLifecycleRole = (actor) => {
 
 const restoreDemoVehicleAvailability = (vehicleId) => {
   const vehicle = getVehicle(vehicleId);
-  if (!vehicle || vehicle.status === 'RENTED' || vehicle.status === 'RETURN_INSPECTION') return;
+  if (!vehicle || hasActiveRental(vehicleId) || ['RENTED', 'RETURN_INSPECTION', 'INACTIVE'].includes(vehicle.status)) return;
   const activeMaintenance = demoState.maintenances.some((item) => (
     item.vehicleId === vehicleId && ['SCHEDULED', 'IN_PROGRESS'].includes(item.status)
   ));
-  if (!activeMaintenance && vehicle.gpsStatus === 'READY') vehicle.status = 'AVAILABLE';
+  if (!activeMaintenance && !vehicle.repairRequired && vehicle.gpsStatus === 'READY') vehicle.status = 'AVAILABLE';
 };
 
 const transitionMaintenanceDemo = (actor, maintenanceId, nextStatus) => {
@@ -3063,6 +2173,7 @@ const transitionMaintenanceDemo = (actor, maintenanceId, nextStatus) => {
 
   maintenance.status = nextStatus;
   maintenance.completedAt = nextStatus === 'COMPLETED' ? new Date().toISOString() : null;
+  if (nextStatus === 'COMPLETED' && maintenance.type === 'REPAIR' && !demoState.maintenances.some((m) => m.vehicleId === vehicle.id && m.type === 'REPAIR' && ['SCHEDULED','IN_PROGRESS'].includes(m.status))) vehicle.repairRequired = false;
   if (['COMPLETED', 'CANCELLED'].includes(nextStatus)) restoreDemoVehicleAvailability(maintenance.vehicleId);
   return {
     ...maintenance,
@@ -3070,83 +2181,7 @@ const transitionMaintenanceDemo = (actor, maintenanceId, nextStatus) => {
   };
 };
 
-const transitionMaintenanceFromSupabase = async (actor, maintenanceId, nextStatus) => {
-  assertMaintenanceLifecycleRole(actor);
-  const maintenanceResult = await supabase
-    .from('maintenances')
-    .select(maintenanceSelect)
-    .eq('id', maintenanceId)
-    .maybeSingle();
-  throwSupabaseError('Gagal membaca maintenance', maintenanceResult.error);
-
-  const maintenance = maintenanceResult.data;
-  if (!maintenance) {
-    const error = new Error('Maintenance tidak ditemukan.');
-    error.status = 404;
-    throw error;
-  }
-  assertCompanyAccess(actor, maintenance.company_id);
-
-  const allowed = {
-    IN_PROGRESS: ['SCHEDULED'],
-    COMPLETED: ['SCHEDULED', 'IN_PROGRESS'],
-    CANCELLED: ['SCHEDULED', 'IN_PROGRESS']
-  };
-  if (!allowed[nextStatus]?.includes(maintenance.status)) {
-    const error = new Error(`Maintenance berstatus ${maintenance.status} tidak dapat diubah menjadi ${nextStatus}.`);
-    error.status = 409;
-    throw error;
-  }
-
-  const now = new Date().toISOString();
-  const updatePayload = {
-    status: nextStatus,
-    completed_at: nextStatus === 'COMPLETED' ? now : null
-  };
-  const updateResult = await supabase
-    .from('maintenances')
-    .update(updatePayload)
-    .eq('id', maintenance.id)
-    .select(maintenanceSelect)
-    .single();
-  throwSupabaseError(`Gagal mengubah status maintenance menjadi ${nextStatus}`, updateResult.error);
-
-  if (['COMPLETED', 'CANCELLED'].includes(nextStatus)) {
-    const [vehicleResult, activeMaintenanceResult] = await Promise.all([
-      supabase.from('vehicles').select('id,status,gps_status').eq('id', maintenance.vehicle_id).maybeSingle(),
-      supabase.from('maintenances').select('id').eq('vehicle_id', maintenance.vehicle_id).in('status', ['SCHEDULED', 'IN_PROGRESS']).limit(1)
-    ]);
-    throwSupabaseError('Gagal memeriksa status kendaraan maintenance', vehicleResult.error);
-    throwSupabaseError('Gagal memeriksa maintenance lain', activeMaintenanceResult.error);
-
-    const vehicle = vehicleResult.data;
-    if (
-      vehicle
-      && !['RENTED', 'RETURN_INSPECTION'].includes(vehicle.status)
-      && vehicle.gps_status === 'READY'
-      && (activeMaintenanceResult.data || []).length === 0
-    ) {
-      const vehicleUpdate = await supabase
-        .from('vehicles')
-        .update({ status: 'AVAILABLE' })
-        .eq('id', vehicle.id);
-      throwSupabaseError('Gagal mengaktifkan kembali kendaraan', vehicleUpdate.error);
-    }
-  }
-
-  const context = await loadReservationContext([{
-    vehicle_id: maintenance.vehicle_id,
-    branch_id: maintenance.branch_id,
-    company_id: maintenance.company_id,
-    customer_id: null
-  }]);
-  return mapDbMaintenance(
-    updateResult.data,
-    context.vehicles.get(maintenance.vehicle_id),
-    context.branches.get(maintenance.branch_id) || null,
-    context.companies.get(maintenance.company_id) || null
-  );
-};
+const transitionMaintenanceFromSupabase = async (actor, maintenanceId, nextStatus) => maintenanceResult(await rentalTransaction(actor, 'MAINTENANCE_STATUS', { maintenanceId, nextStatus }));
 
 export const startMaintenance = (actor, maintenanceId) => (
   supabase
@@ -3173,7 +2208,7 @@ const getSummaryDemo = async (actor) => {
     : listReservationsDemo(actor);
   const rentals = listRentals(actor);
   return {
-    companies: actor.role === 'CENTRAL_ADMIN' ? demoState.companies.length : 1,
+    companies: demoState.companies.filter(c=>actor.role==='CENTRAL_ADMIN'||c.id===actor.companyId).length,
     branches: demoState.branches.filter((branch) => actor.role === 'CENTRAL_ADMIN' || branch.companyId === actor.companyId).length,
     vehicles: companyVehicles.length,
     availableVehicles: companyVehicles.filter((vehicle) => vehicle.status === 'AVAILABLE' && vehicle.gpsStatus === 'READY').length,
@@ -3187,20 +2222,21 @@ const getSummaryDemo = async (actor) => {
 
 const getSummaryFromSupabase = async (actor) => {
   const [companies, fleet, reservations, rentals, customers] = await Promise.all([
-    getCompanies(),
+    getCompaniesFromSupabase({includeAll:true}),
     listFleetFromSupabase(actor),
     listReservationsFromSupabase(actor),
     listRentalsFromSupabase(actor),
     actor.role === 'CENTRAL_ADMIN' ? listCustomers(actor) : Promise.resolve([])
   ]);
 
-  const branches = companies.reduce(
+  const scopedCompanies = companies.filter(c=>actor.role==='CENTRAL_ADMIN'||c.id===actor.companyId);
+  const branches = scopedCompanies.reduce(
     (total, company) => total + company.branches.length,
     0
   );
 
   return {
-    companies: actor.role === 'CENTRAL_ADMIN' ? companies.length : 1,
+    companies: scopedCompanies.length,
     branches,
     vehicles: fleet.length,
     availableVehicles: fleet.filter((vehicle) => (
@@ -3229,3 +2265,76 @@ export const getSummary = (actor) => (
 );
 
 export const constants = { DELIVERY_RADIUS_KM };
+
+const demoSettlement = (rental) => {
+  const fines = demoState.fines.filter((f) => f.rentalId === rental.id);
+  const disputes = demoState.disputes.filter((d) => fines.some((f) => f.id === d.fineId));
+  const reservation = demoState.reservations.find((s) => s.id === rental.reservationId);
+  return financialSummary(fines, reservation?.depositAmount || 0, rental.finePayment, disputes);
+};
+
+const requiredReason = (value) => {
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > 2000) badRequest('Alasan wajib 1-2000 karakter.');
+  return value.trim();
+};
+
+export const cancelReservation = async (actor, reservationId, payload = {}) => {
+  const reason = requiredReason(payload?.reason);
+  if (supabase) {
+    const result = await rentalTransaction(actor, 'CANCEL', { reservationId, reason });
+    return { reservation: mapDbReservation(result.reservation, await loadReservationContext([result.reservation])) };
+  }
+  const reservation = demoState.reservations.find((s) => s.id === reservationId);
+  if (!reservation || (actor.role === 'CUSTOMER' && reservation.customerId !== actor.id)) throw Object.assign(new Error('Reservasi tidak ditemukan.'), { status: 404 });
+  if (actor.role !== 'CUSTOMER') { assertCompanyAccess(actor, reservation.companyId); assertMaintenanceLifecycleRole(actor); }
+  if (reservation.status === 'CANCELLED' && reservation.cancellation) return { reservation };
+  if (!['DRAFT','PENDING_PAYMENT','CONFIRMED'].includes(reservation.status) || demoState.rentals.some((r) => r.reservationId === reservationId)) throw Object.assign(new Error('Pembatalan hanya sebelum handover.'), { status: 409 });
+  const payment = demoState.payments.find((p) => p.reservationId === reservationId && p.status === 'PAID');
+  if (payment && !['SIMULATED_GATEWAY','INTERNAL_MANUAL'].includes(payment.provider)) throw Object.assign(new Error('Pembayaran riil memerlukan refund melalui provider resmi.'), { status: 409 });
+  if (reservation.status === 'CONFIRMED' && !payment) throw Object.assign(new Error('Pembayaran reservasi tidak konsisten; perlu rekonsiliasi.'), { status: 409 });
+  const cancelledAt = new Date().toISOString();
+  reservation.cancellation = { id: makeId('cancel'), reason, cancelledBy: actor.id, cancelledAt, refundAmount: payment?.amount || 0, refundStatus: payment ? (payment.provider === 'INTERNAL_MANUAL' ? 'REFUND_PENDING' : 'REFUNDED_SIMULATED') : 'NOT_REQUIRED', provider: payment?.provider || 'INTERNAL_MANUAL', paymentId: payment?.id || null };
+  reservation.status = 'CANCELLED'; reservation.cancelledAt = cancelledAt;
+  if (payment?.provider === 'SIMULATED_GATEWAY') payment.status = 'REFUNDED';
+  (demoState.paymentOrders||[]).filter(o=>o.reservationId===reservationId&&['PENDING','DECLARED','PAID'].includes(o.status)).forEach(o=>{o.status=o.status==='PAID'?'REFUND_PENDING':'CANCELLED';});
+  return { reservation };
+};
+
+export const resolveDispute = async (actor, disputeId, payload = {}) => {
+  const notes = requiredReason(payload?.notes);
+  if (!['ACCEPTED','REJECTED','ADJUSTED'].includes(payload.decision)) badRequest('Keputusan sengketa tidak valid.');
+  if (payload.decision === 'ADJUSTED' && (!Number.isSafeInteger(payload.amount) || payload.amount < 0)) badRequest('Denda harus rupiah bulat tidak negatif.');
+  if (supabase) return rentalResult(await rentalTransaction(actor, 'RESOLVE_DISPUTE', { ...payload, disputeId, notes }));
+  assertMaintenanceLifecycleRole(actor);
+  const dispute = demoState.disputes.find((d) => d.id === disputeId);
+  const fine = dispute && demoState.fines.find((f) => f.id === dispute.fineId);
+  const rental = fine && demoState.rentals.find((r) => r.id === fine.rentalId);
+  if (!rental) throw Object.assign(new Error('Sengketa tidak ditemukan.'), { status: 404 });
+  assertCompanyAccess(actor, rental.companyId);
+  if (dispute.status !== 'OPEN') {
+    if (dispute.status === payload.decision && dispute.resolutionNotes === notes && (payload.decision !== 'ADJUSTED' || dispute.finalAmount === payload.amount)) return { dispute, rental };
+    throw Object.assign(new Error('Sengketa sudah diputuskan; keputusan tidak dapat ditimpa.'), { status: 409 });
+  }
+  if (rental.status !== 'RETURN_PENDING_REVIEW' || fine.status !== 'DISPUTED' || rental.finePayment) throw Object.assign(new Error('Sengketa tidak dapat diputuskan pada status ini.'), { status: 409 });
+  if (payload.decision === 'ADJUSTED' && payload.amount > fine.amount) badRequest('Penyesuaian tidak boleh melebihi denda awal.');
+  const amount = payload.decision === 'ACCEPTED' ? 0 : payload.decision === 'REJECTED' ? fine.amount : payload.amount;
+  Object.assign(dispute, { status: payload.decision, resolutionNotes: notes, originalAmount: fine.amount, finalAmount: amount, resolvedBy: actor.id, resolvedAt: new Date().toISOString() });
+  fine.amount = amount; fine.status = payload.decision === 'ACCEPTED' ? 'CANCELLED' : 'APPROVED';
+  const refund = demoState.refunds.find((f) => f.rentalId === rental.id);
+  if (refund?.status === 'PENDING_CONFIRMATION') refund.amount = demoSettlement(rental).refundAmount;
+  return { dispute, rental };
+};
+
+export const simulateFinePayment = async (actor, rentalId, approvedOrder) => {
+  if (!approvedOrder) createPaymentRecord({ reservationId: rentalId, amount: 0 });
+  if (supabase) return rentalResult(await rentalTransaction(actor, 'PAY_FINE', { rentalId }));
+  const rental = demoState.rentals.find((r) => r.id === rentalId);
+  if (!rental || rental.customerId !== actor.id) throw Object.assign(new Error('Rental tidak ditemukan.'), { status: 404 });
+  if (actor.role !== 'CUSTOMER') throw Object.assign(new Error('Hanya customer dapat membayar selisih denda.'), { status: 403 });
+  if (rental.finePayment) return { rental, payment: rental.finePayment };
+  const settlement = demoSettlement(rental);
+  if (!['RETURN_PENDING_REVIEW','COMPLETED'].includes(rental.status) || settlement.disputed || settlement.balanceDue <= 0) throw Object.assign(new Error('Selesaikan sengketa dan pastikan ada selisih denda sebelum membayar.'), { status: 409 });
+  rental.finePayment = { id: makeId('fine-pay'), provider: approvedOrder ? 'INTERNAL_MANUAL' : 'SIMULATED_GATEWAY', providerReference: makeId('FINE-SIM'), amount: settlement.balanceDue, status: 'PAID', paidBy: actor.id, paidAt: new Date().toISOString() };
+  demoState.fines.filter((f) => f.rentalId === rental.id && f.status !== 'CANCELLED').forEach((f) => { f.status = 'APPROVED'; });
+  return { rental, payment: rental.finePayment };
+};

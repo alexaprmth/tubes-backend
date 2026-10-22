@@ -1,0 +1,11 @@
+{
+  "name": "transrent-sql-regression",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node check.mjs && node legacy-backfill.mjs && node business.mjs && node bootstrap.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.9"
+  }
+}

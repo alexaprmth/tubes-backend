@@ -35,6 +35,8 @@ export const supabaseAuth = url && authKey
 
 export const persistence = supabase ? 'supabase' : 'demo-in-memory';
 
+export const newAuthClient = () => createClient(url, authKey, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
+
 const classifySupabaseError = (error) => {
   const message = error?.message || 'Unknown Supabase error';
   const lower = message.toLowerCase();
@@ -83,9 +85,16 @@ export const getDatabaseHealth = async () => {
     };
   }
 
+  const migrations = await supabase.from('transrent_schema_versions').select('version').limit(20);
+  const versions = new Set((migrations.data || []).map((row) => row.version));
+  const schemaReady = !migrations.error && versions.has('010') && versions.has('011') && versions.has('012') && versions.has('013') && versions.has('014') && versions.has('015') && versions.has('016');
   return {
     configured: true,
     reachable: true,
+    schemaReady,
+    requiredMigrations: ['010', '011', '012', '013', '014', '015', '016'],
+    appliedMigrations: [...versions],
+    ...(schemaReady ? {} : { code: 'MIGRATION_REQUIRED', message: 'Jalankan supabase/transrent-business-update-bundle.sql melalui SQL Editor.' }),
     persistence,
     latencyMs: Date.now() - startedAt,
     rentalCompanyRows: count ?? null

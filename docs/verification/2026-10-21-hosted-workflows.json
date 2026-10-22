@@ -1,0 +1,118 @@
+{
+  "date": "2026-10-21T10:33:15.5654910+08:00",
+  "target": "http://localhost:5174/",
+  "persistence": "Supabase",
+  "schema_versions": [
+    "010",
+    "011",
+    "012",
+    "013",
+    "014",
+    "015",
+    "016"
+  ],
+  "payment_provider": "INTERNAL_MANUAL",
+  "steps": [
+    {
+      "mode": "checkout",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:12:19.915Z"
+    },
+    {
+      "mode": "declare",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:13:17.279Z"
+    },
+    {
+      "mode": "approve",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:13:57.049Z"
+    },
+    {
+      "mode": "cancel",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:14:53.592Z"
+    },
+    {
+      "mode": "cancel-refund",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:16:03.12Z"
+    },
+    {
+      "mode": "handover",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:16:07.132Z"
+    },
+    {
+      "mode": "clean-reserve",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:17:41.616Z"
+    },
+    {
+      "mode": "return",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:18:59.62Z"
+    },
+    {
+      "mode": "dispute",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:19:35.02Z"
+    },
+    {
+      "mode": "resolve",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:20:30.598Z"
+    },
+    {
+      "mode": "fine-checkout",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:21:21.716Z"
+    },
+    {
+      "mode": "fine-paid",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:21:55.03Z"
+    },
+    {
+      "mode": "clean-return",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:22:22.302Z"
+    },
+    {
+      "mode": "clean-payout",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:23:12.762Z"
+    },
+    {
+      "mode": "repair",
+      "status": "PASS",
+      "verifiedAt": "2026-10-21T02:23:15.39Z"
+    }
+  ],
+  "results": {
+    "cancellation_after_payment": "REFUNDED_INTERNAL; Rp800000",
+    "dispute": "OPEN blocks fine-checkout/refund; ADJUSTED800000to700000",
+    "clean_rental": "COMPLETED only after payout500000",
+    "fine_payment": "PAID Rp200000; balance0",
+    "damaged_rental": "COMPLETED; vehicle remained MAINTENANCE until REPAIR completed",
+    "cancellation_before_payment": "CANCELLED; no refund required",
+    "gps": "3 synthetic points accepted with ephemeral process token"
+  },
+  "ui_actions": [
+    "customer payment declaration",
+    "admin payment approval",
+    "staff checklist handover",
+    "admin deposit payout"
+  ],
+  "api_verified": true,
+  "sql_executed_by_agent": false,
+  "limitations": [
+    "No real bank/Midtrans transfer",
+    "No photo/authenticity verification",
+    "No invitation email sent",
+    "No legal MoU accepted or official stamp/signature generated",
+    "No load/stress or real hardware test"
+  ],
+  "bug_fixed": "Stale account refresh cannot overwrite current UI session; preserves latest tokens",
+  "provenance": "Sanitized copy of hosted workflow verification recorded 2026-10-21; historical evidence, not rerun at publish time."
+}

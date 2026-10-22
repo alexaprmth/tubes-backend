@@ -4,7 +4,7 @@ import {
   findUserByEmail,
   getPublicUser
 } from './data/store.js';
-import { supabase, supabaseAuth } from './db.js';
+import { supabase, supabaseAuth, newAuthClient } from './db.js';
 import { uploadDataUrl } from './storage.js';
 
 dotenv.config();
@@ -69,8 +69,7 @@ const getSupabaseProfile = async (userId) => {
     .maybeSingle();
 
   if (error) {
-    console.error(`Gagal membaca profile Supabase: ${error.message}`);
-    return null;
+    throw Object.assign(new Error('Gagal memuat profil akun. Coba lagi setelah koneksi pulih.'),{status:502,code:'PROFILE_LOAD_FAILED'});
   }
 
   return data;
@@ -87,6 +86,7 @@ export const resolveActor = async (request) => {
 
   const { data, error } = await supabase.auth.getUser(token);
 
+  if(error?.status>=500 || error && !error.status) throw Object.assign(new Error('Layanan autentikasi belum dapat dihubungi.'),{status:503});
   if (error || !data.user) return null;
 
   const profile = await getSupabaseProfile(data.user.id);
@@ -94,16 +94,11 @@ export const resolveActor = async (request) => {
 };
 
 export const requireAuth = async (request, response, next) => {
-  const actor = await resolveActor(request);
-
-  if (!actor) {
-    return response.status(401).json({
-      message: 'Unauthorized. Silakan login.'
-    });
-  }
-
-  request.actor = actor;
-  return next();
+  try {
+    const actor = await resolveActor(request);
+    if(!actor) return response.status(401).json({message:'Unauthorized. Silakan login.'});
+    request.actor=actor;return next();
+  }catch(error){return next(error);}
 };
 
 export const requireRoles = (...roles) => (
@@ -274,4 +269,11 @@ export const registerAccount = async (payload) => {
       ? 'Akun berhasil dibuat. Tunggu verifikasi Admin Pusat.'
       : 'Akun berhasil dibuat. Periksa email untuk konfirmasi, lalu tunggu verifikasi Admin Pusat.'
   };
+};
+
+export const refreshAccount = async (refreshToken) => {
+  if (!supabaseAuth || typeof refreshToken !== 'string' || !refreshToken) throw makeAuthError('Sesi tidak dapat diperbarui.');
+  const { data, error } = await newAuthClient().auth.refreshSession({refresh_token:refreshToken});
+  if(error || !data.session || !data.user) throw makeAuthError('Sesi kedaluwarsa. Silakan login ulang.');
+  return {user:mapProfileToActor(data.user,await getSupabaseProfile(data.user.id)),accessToken:data.session.access_token,refreshToken:data.session.refresh_token,expiresAt:data.session.expires_at};
 };

@@ -1,0 +1,660 @@
+RINCIAN IMPLEMENTASI TRANSRENT
+Tanggal: 14 Oktober 2026 (Asia/Shanghai)
+Repo: alexaprmth/tubes-backend
+Lokasi aplikasi: D:\Documents\Kuliah\Semester 7\Backend\TransRent
+Basis: branch main, commit 15e08a8fd9f087dd7501dfafe5413dd95125cc30
+Status: perubahan kode lokal; belum commit, push atau merge.
+
+1. KEPUTUSAN DAN BATAS PEKERJAAN
+Perbaikan rekomendasi 1,2,3,4,6 dikerjakan sebelum menambah fitur.
+MoU final fisik/digital dibuat dengan kedua pihak menandatangani di luar app;
+pemilik rental mengunggah PDF final dan Admin Pusat mereview.
+Permintaan lanjutan: popup checkbox Terms and Conditions dan pembuatan surat
+online tanpa manual cetak/scan/penempatan tanda tangan/meterai.
+Owner memilih DEMO AKADEMIK dengan label SIMULASI; integrasi provider asli ditunda.
+Progress sempat ditahan atas permintaan owner dan sekarang telah dilanjutkan.
+Dokumen TXT ini dibuat setelah implementasi kode dan pemeriksaan selesai.
+
+SQL live BUKAN bagian yang telah dijalankan agen. Owner memilih menjalankan
+skrip sendiri di Supabase SQL Editor. Kode siap tetapi fungsi yang memakai
+RPC baru masih memerlukan migration 010/011/012 pada database tersebut.
+Bank memori yang dipakai hanya hermes-academic; native ingest belum tersedia.
+
+2. RETURN, UANG DAN LIFECYCLE RENTAL
+- Frontend return mengirim JSON.stringify, sehingga server tidak menerima
+  body [object Object] atau JSON yang tidak bisa diparse.
+- Tanggal rental harus format YYYY-MM-DD dan hari kalender yang benar.
+  EndDate harus sesudah StartDate. Return tidak boleh sebelum rental dimulai.
+- Denda kerusakan harus number, finite, rupiah bulat, tidak negatif.
+  String, NaN, Infinity, pecahan dan nominal melebihi batas ditolak.
+- Satu hari terlambat dihitung satu hari, dengan tarif 25% harga harian yang
+  dibulatkan; perhitungan demo disamakan dengan tanggal UTC yang dipakai SQL.
+- Perhitungan/validasi dilakukan sebelum inspeksi/fine/status ditulis.
+- Refund dihitung max(0, deposit - fine), memerlukan return pending dan
+  refund pending. Sengketa terbuka menahan konfirmasi refund.
+- Rental COMPLETED menutup reservasi menjadi COMPLETED. Kendaraan rusak,
+  GPS tidak siap atau maintenance tidak langsung dinyatakan AVAILABLE.
+- Pembayaran dan refund yang diulang tidak membuat record baru atau
+  mengubah kendaraan yang sudah dipakai oleh rental berikutnya.
+- Sengketa memakai transaksi/guard lifecycle; fitur penyelesaian sengketa
+  produksi yang lengkap tidak ditambahkan dalam scope ini.
+
+3. ATOMIC WRITE DAN STATUS KENDARAAN
+- Penulisan Supabase reservation/payment/handover/return/refund/maintenance
+  dan sengketa memakai transrent_transaction, bukan update tabel terpisah.
+- Fungsi SQL membaca profile aktor untuk role/company/verification dan
+  mengunci kendaraan terlebih dahulu, lalu record transaksi terkait.
+- Rental, reservation, vehicle, inspection/items/photos, fine dan refund
+  yang terkait disimpan dalam transaksi yang sama. Error membatalkan write.
+- Partial unique index mencegah dua rental aktif pada kendaraan yang sama,
+  dan lebih dari satu pembayaran PAID untuk reservasi yang sama.
+- Handover ditolak jika kendaraan telah disewa/return inspection/maintenance.
+  Maintenance tidak menimpa kendaraan yang masih memiliki rental aktif;
+  kendaraan INACTIVE tidak diaktifkan lewat maintenance.
+- Penyelesaian maintenance mengecek rental/maintenance lain dan GPS sebelum
+  mengembalikan AVAILABLE. Retry refund tidak melepaskan kendaraan baru.
+- File Storage bukan satu transaksi dengan PostgreSQL. Inspeksi memakai
+  path UUID immutable; file attempt gagal dibersihkan sebisa mungkin.
+  Foto/signature inspeksi harus data URL PNG/JPEG/WebP, bukan path arbitrer.
+
+4. PRIVASI DAN RLS
+- Daftar GPS customer dibatasi rental ACTIVE milik akun tersebut, bukan
+  seluruh sejarah kendaraan yang pernah disewa orang lain.
+- Latest location memakai rental ID; tidak mengambil titik rental sebelumnya.
+- Kontak customer pada response operasional hanya id/name/email/phone.
+  KTP/SIM tidak disertakan pada daftar reservasi/rental/tracking staff.
+- Profil sendiri dan verifikasi Admin Pusat tetap memakai data sesuai haknya.
+- Migration 010 menutup policy/grant INSERT reservation dari authenticated;
+  harga/status/tenant tidak dapat dilewati dengan INSERT langsung customer.
+- RPC hanya dapat dieksekusi service role backend, bukan anon/authenticated.
+
+5. MOU FINAL FISIK/DIGITAL
+- Template Word/PDF fisik dan digital tersedia, masing-masing empat halaman.
+- Seluruh placeholder, identitas/kewenangan, biaya, periode dan lampiran
+  harus dilengkapi sebelum kedua pihak menandatangani.
+- Fisik: meterai tempel asli/tanda tangan basah, scan seluruh halaman,
+  simpan dokumen fisik asli.
+- Elektronik resmi: gunakan provider resmi TTE/e-Meterai; upload PDF final
+  asli tanpa edit/kompres/cetak-scan. Tidak ada integrasi provider berbayar.
+- Pemilik hanya mengunggah untuk company sendiri dan MoU DRAFT/PENDING.
+  PDF <=8 MB, jenis meterai dan tanggal diperiksa; kedua pihak dinyatakan
+  sudah menandatangani oleh pengunggah, kemudian direview manusia.
+- PDF disimpan privat dengan path UUID tanpa upsert dan hash SHA-256.
+- Aktivasi Admin Pusat memerlukan pernyataan review dan hash terbaru yang sama
+  agar file yang telah diganti saat pending tidak direview dengan hash lama.
+- File MoU ACTIVE tidak diganti pemilik. Perubahan perlu MoU/addendum baru.
+- Hash hanya membuktikan kesamaan byte. Keaslian sertifikat/meterai manual.
+- MoU ACTIVE legacy/demo tidak dicabut otomatis oleh migration.
+
+6. POPUP MOU ONLINE SIMULASI AKADEMIK
+Alur pemilik:
+  MoU layanan -> pilih MoU DRAFT/PENDING -> Buka persetujuan online -> baca
+  ketentuan -> centang empat persetujuan dan meterai simulasi -> periode ->
+  Setuju dan buat PDF simulasi -> download otomatis / download ulang.
+
+Detail:
+- Versi canonical: ACADEMIC-MOU-2026-10-14-v1. UI mengambil clauses/checks,
+  versi dan hash dari server; isi popup sama dengan isi yang masuk PDF.
+- Checkbox: membaca/menyetujui ketentuan, kewenangan mewakili rental,
+  pemahaman GPS/privasi dan pemahaman bahwa ini simulasi.
+- Meterai Rp10.000 simulasi dipilih via checkbox, tanpa upload gambar.
+- Tombol submit baru aktif jika semua checkbox/periode lengkap.
+- Backend juga memeriksa boolean true (string "true" ditolak), hash/versi
+  terbaru, tanggal valid, role/company, status, receipt yang belum ada dan
+  readiness migration 012 sebelum upload Storage.
+- Nama pemilik berasal dari profile terautentikasi. Nama perusahaan dari
+  data company, bukan bebas dikirim browser sebagai identitas pihak lain.
+- PDF dibuat oleh PDFKit: ketentuan, identitas, periode, receipt ID, waktu UTC,
+  versi/hash ketentuan, daftar consent dan tampilan persetujuan/meterai simulasi.
+- Semua halaman berlabel SIMULASI AKADEMIK. Tampilan tidak memakai gambar
+  meterai asli, sertifikat digital atau TTD resmi; pihak TransRent juga hanya
+  placeholder simulasi dan bukan pernyataan telah menandatangani sungguhan.
+- Receipt menyimpan acceptedBy/acceptedAt, recordedAt DB, termsVersion/hash,
+  consents, mode, expiresAt, receipt ID, hash PDF dan private documentPath.
+- Receipt berada di online_simulation, TERPISAH dari document_path dan
+  document_metadata final. Pembuatan simulasi tidak mengubah status MoU
+  atau izin GPS. Simulasi saja tidak memenuhi review aktivasi MoU resmi.
+- Satu receipt per MoU; RPC mengunci baris dan menolak duplikat, termasuk race.
+- Pemilik/Admin Pusat boleh download PDF simulasi; customer/staff tidak.
+- Download gagal tidak mengulang submit consent; tombol download ulang ada.
+- PDF simulasi yang hash-nya sama dengan receipt MoU ini ditolak bila diunggah
+  sebagai final resmi. Ini guard file dikenal, bukan scanner semua PDF palsu.
+- Dialog mendukung focus awal, Tab trap, Escape, close/batal, busy/error dan
+  kotak ketentuan scroll. Pemeriksaan browser interaktif penuh belum dilakukan.
+
+7. ENDPOINT DAN DATABASE TAMBAHAN
+MoU sebelumnya:
+  GET /api/rental/gps-agreements
+  POST /api/rental/gps-agreements/:id/document
+  GET /api/gps-agreements/:id/document
+  GET /api/mou/templates/:name
+Online baru:
+  GET /api/mou/online-terms
+  POST /api/rental/gps-agreements/:id/online-simulation
+  GET /api/gps-agreements/:id/online-simulation/document
+
+Migration 010: transaksi rental, unique index, nonnegative fine/refund,
+  status COMPLETED dan perbaikan historical reservations, revoke INSERT.
+Migration 011: document_metadata dan RPC transrent_mou untuk upload/review.
+Migration 012: online_simulation dan RPC transrent_mou_simulation terpisah.
+Ketiganya memakai marker transrent_schema_versions untuk menolak replay sukses.
+Tidak ada migration lama yang dihapus/di-rename atau replay seed live.
+
+8. INVENTARIS FILE YANG DITAMBAH/DIUBAH
+01. README.md
+    Ringkasan aplikasi, Node 22+, urutan bootstrap seed, RPC 010/011/012, langkah SQL Editor dan cara menjalankan suite SQL terisolasi.
+02. backend/package-lock.json
+    Mengunci PDFKit dan dependency turunannya agar npm ci reproducible.
+03. backend/package.json
+    Menambahkan dependency PDFKit 0.20.2 untuk pembuatan PDF otomatis di backend.
+04. backend/src/data/lifecycle.test.js
+    Regresi tanggal invalid, pembayaran retry, refund prematur, nominal denda, keterlambatan, kerusakan, sengketa, maintenance, handover ganda dan privasi GPS/identitas.
+05. backend/src/data/store.js
+    Validasi tanggal/uang/inspeksi, lifecycle demo, kontak minimal/GPS rental, transaksi RPC Supabase, guard maintenance, mapping receipt simulasi, dan review MoU.
+06. backend/src/data/store.test.js
+    Tes helper lama tetap tersedia; mengimpor hook yang memaksa data demo agar .env live tidak dipakai tes.
+07. backend/src/db.js
+    Deep health membedakan koneksi reachable dengan schemaReady; menampilkan migration 010/011/012 yang diperlukan.
+08. backend/src/http.test.js
+    Server HTTP demo terisolasi untuk rental lengkap dan alur popup: read terms, persetujuan invalid/valid, duplicate, download PDF dan pemeriksaan dokumen final tetap kosong.
+09. backend/src/mou-online.js
+    Ketentuan canonical versi/hash, validasi empat checkbox, periode, role/status dan readiness 012; PDF otomatis, receipt terpisah, upload privat, RPC atomic, cleanup dan download ulang.
+10. backend/src/mou-online.test.js
+    Checkbox boolean wajib, hash/versi, pilihan meterai, tanggal, tenant, file PDF, final/GPS tidak berubah, retry, download authorization dan guard upload simulasi ke final.
+11. backend/src/mou.js
+    Upload/download final privat, format/ukuran/tanggal/role, hash file dan cleanup RPC gagal. Kini menolak upload ulang PDF simulasi yang hash-nya sama dengan receipt MoU ini sebagai final resmi.
+12. backend/src/mou.test.js
+    Regresi file PDF/ukuran, tenant, upload pending, review hash lama, activation dan immutable final.
+13. backend/src/openapi.js
+    Kontrak Swagger untuk upload/download/template dan tiga endpoint online, termasuk body consent, response dan error.
+14. backend/src/server.js
+    Menambahkan endpoint MoU/template/final/online, autentikasi/peran, download PDF no-store, dan deep health yang mensyaratkan versi migration.
+15. backend/src/testing-env.js
+    Mengosongkan konfigurasi Supabase hanya dalam proses tes; memaksa simulated payment dan demo auth. Tidak diimpor startup aplikasi normal.
+16. docs/IMPLEMENTATION_CHANGES.txt
+    Laporan TXT ini: rincian keputusan, logika, file, API, SQL, tes, batas dan langkah owner.
+17. docs/IMPLEMENTATION_STATUS.md
+    Checkpoint historis + lanjutan online, bukti tes, DB yang belum dimigrasikan dan batas verifikasi.
+18. docs/MOU_WORKFLOW.md
+    Alur fisik/digital final dan online simulasi, sumber resmi, perbedaan hash/persetujuan dengan meterai/TTE asli.
+19. docs/SQL_EDITOR_HANDOFF.md
+    Target fingerprint, preflight/backup, urutan 010/011/012/verify, larangan replay bundle sukses dan readiness.
+20. docs/templates/mou-transrent-digital.docx
+    Template empat halaman untuk jalur digital; editable Word. Isi identitas/ketentuan/lampiran sebelum tanda tangan. Tidak memuat meterai atau sertifikat asli.
+21. docs/templates/mou-transrent-digital.pdf
+    Template empat halaman untuk jalur digital; preview/cetak PDF. Isi identitas/ketentuan/lampiran sebelum tanda tangan. Tidak memuat meterai atau sertifikat asli.
+22. docs/templates/mou-transrent-fisik.docx
+    Template empat halaman untuk jalur fisik; editable Word. Isi identitas/ketentuan/lampiran sebelum tanda tangan. Tidak memuat meterai atau sertifikat asli.
+23. docs/templates/mou-transrent-fisik.pdf
+    Template empat halaman untuk jalur fisik; preview/cetak PDF. Isi identitas/ketentuan/lampiran sebelum tanda tangan. Tidak memuat meterai atau sertifikat asli.
+24. frontend/src/App.jsx
+    Memperbaiki JSON return, menu pemilik MoU, pemilihan agreement, template/final upload, kartu online, popup dan download simulasi terpisah pada pemilik/pusat.
+25. frontend/src/OnlineMouModal.jsx
+    Dialog Terms/Conditions, fetch versi/hash, empat checkbox, meterai simulasi dan periode; validasi kesiapan submit, busy/error, focus trap/Escape/focus return, auto download setelah receipt tersimpan.
+26. frontend/src/api.js
+    Helper download authenticated memakai Blob dan object URL, dengan error dan revoke URL.
+27. frontend/src/styles.css
+    Gaya kotak ketentuan scroll, checkbox dan fokus popup; memanfaatkan modal/card yang sudah ada.
+28. supabase/00_preflight.sql
+    Read-only: schema, constraint, extension, policy, history/index dan hitungan duplikat/nominal invalid; stop jika tidak sesuai.
+29. supabase/01_backup.sql
+    Snapshot data dan metadata schema/policy/grants/functions dalam schema privat, tidak overwrite dan tidak dipublikasikan melalui API.
+30. supabase/04_verify.sql
+    Read-only: marker 010/011/012, tiga RPC, indeks/kolom/grants dan status historis yang sesuai.
+31. supabase/migrations/010_atomic_rental_operations.sql
+    Fungsi transaksi rental + lock kendaraan, partial unique aktif/PAID, nominal non-negatif, COMPLETED historis, revoke INSERT customer; guard replay.
+32. supabase/migrations/011_mou_owner_upload.sql
+    Metadata final dan RPC upload/review service-role-only, role/tenant, immutable final aktif, hash review dan periode; guard replay.
+33. supabase/migrations/012_online_mou_simulation.sql
+    Kolom online_simulation dan RPC persetujuan pemilik. Lock row, cek role/tenant/receipt/path/consent, menolak duplikat. Dokumen/status/GPS resmi tidak diubah; guard replay.
+34. supabase/tests/check.mjs
+    PostgreSQL PGlite sintetis untuk transaksi, rollback, uang, sengketa/maintenance, MoU review, receipt simulasi terpisah, priviledge, backup/preflight/verify dan replay. PostGIS stub.
+35. supabase/tests/package-lock.json
+    Lockfile dependency pengujian SQL.
+36. supabase/tests/package.json
+    Paket pengujian SQL terpisah dari runtime app; PGlite 0.5.9.
+
+9. PEMERIKSAAN YANG BENAR-BENAR DIJALANKAN
+- Backend: 16/16 tests lulus. Hook tes memaksa demo walaupun .env live terisi.
+  HTTP lifecycle dan online consent/download dijalankan pada server sintetis.
+- PostgreSQL PGlite terisolasi: rollback, uang, idempotency, sengketa/maintenance,
+  role/tenant, hash review, receipt terpisah, duplicate, privilege, preflight,
+  backup, verify dan replay guard lulus. Tidak menghubungi Supabase live.
+- Frontend production build: 74 modules, lulus.
+- Template lama: delapan halaman fisik/digital dirender Word/Poppler dan
+  diperiksa visual. Renderer LibreOffice tidak tersedia pada Windows ini.
+- Contoh PDF online: dua halaman, diekstrak teks dan dirender Poppler;
+  kedua halaman diperiksa visual, label SIMULASI ada pada setiap halaman.
+- git diff --check dijalankan pada folder aplikasi.
+- HTTP frontend 5174 dan health ringan 4100: 200 setelah restart.
+  OpenAPI memuat endpoint online baru. Deep health: 503 MIGRATION_REQUIRED,
+  reachable=true, schemaReady=false, required=010/011/012, applied=[].
+- Pembacaan live hanya metadata/version readiness, tidak menjalankan migration.
+  Target backend/.env diverifikasi dengan fingerprint URL dfcce416dcb686d3.
+  URL, key, password dan connection string tidak dimasukkan laporan ini.
+
+10. LANGKAH OWNER DAN HAL YANG BELUM DIVERIFIKASI
+Implementasi kode selesai, database live masih menunggu tindakan owner:
+  hentikan backend -> 00_preflight.sql -> 01_backup.sql -> migration 010 ->
+  011 -> 012 -> 04_verify.sql -> restart -> health/deep.
+Periksa project SQL Editor sesuai backend/.env dan seluruh preflight terlebih
+  dahulu. Jika versi sudah berhasil, jangan replay; jalankan hanya yang belum.
+Backup privat di database yang sama bukan pengganti backup off-site/provider
+  restore point. Jangan overwrite snapshot; jangan expose schema backup via API.
+Setelah migration, schemaReady harus true. Full schema/history compatibility
+  masih harus dibuktikan oleh preflight/verify pada DB target.
+
+Tidak diklaim teruji/diimplementasikan:
+- Provider e-Meterai/TTE asli, sertifikat/eKYC/OTP dan pembelian meterai nyata.
+- Pembayaran/refund gateway nyata, hardware GPS dan deployment produksi.
+- Browser interaktif penuh, PostGIS delivery nyata dan concurrency PostgreSQL
+  melalui banyak koneksi. PGlite memakai stub geography, bukan proof live.
+- Malware/struktur PDF/signature verification otomatis.
+- Retensi archive/cleanup semua Storage orphan, refresh session, hardening
+  GPS token wajib dan semua temuan audit lain di luar prioritas yang dipilih.
+
+File .env dan PDF progres asli tidak ditimpa/di-commit. Dependency app berubah
+  hanya untuk PDFKit; dependency PGlite berada pada paket tes terpisah.
+Checkpoint Hindsight academic masih local_pending karena tool native ingest
+  tidak tersedia; accepted/processed/searchable belum terbukti.
+
+Contoh tambahan: outputs/mou-online-simulation-example.pdf memakai data sintetis.
+Paket SQL terbaru dan laporan TXT ini tersedia pada outputs chat; file laporan
+  yang sama disalin ke docs/IMPLEMENTATION_CHANGES.txt di repo.
+
+
+REVISI TERBARU - 14 OKTOBER 2026: DRAF MOU, TOMBOL, BUNDLE SQL
+
+1. backend/src/mou-online.js
+   PDF online tanpa kata simulasi, berstatus DRAF, dengan bukti persetujuan akun dan
+   ruang meterai Rp10.000. Belum ada TTD/e-Meterai resmi. Klausul/checkbox versi v2
+   dan hash baru; identitas/version internal ACADEMIC_SIMULATION tetap kompatibel.
+   Paragraph kembali rata kiri. Readiness memerlukan migration 013.
+2. backend/src/server.js
+   Bug download template: resolusi folder dari backend/src sebelumnya naik tiga
+   tingkat, menunjuk folder di luar repo. Sekarang naik dua tingkat ke docs/templates.
+   Semua empat file download diuji HTTP 200, akses customer ditolak 403.
+   Filename online menjadi mou-online-draf.pdf. Ketentuan menyertakan kesiapan schema
+   agar popup menjelaskan bundle yang belum dijalankan sebelum submit.
+3. backend/src/db.js
+   Deep health sekarang mensyaratkan 010-013 dan menyebut satu bundle SQL.
+4. frontend/src/App.jsx
+   Error daftar MoU ditampilkan, tombol Muat ulang tersedia. DRAFT/PENDING pertama
+   otomatis dipilih; pilihan yang sudah hilang tidak dapat diproses. Jika kosong,
+   halaman menjelaskan Admin Pusat harus membuat MoU. Bukti online kedua tetap dicegah
+   dan pengguna diarahkan download bukti tersimpan. Label download menjadi draf online.
+5. frontend/src/OnlineMouModal.jsx
+   Status draf dan ruang meterai dijelaskan. Tombol aktif setelah empat persetujuan,
+   ruang meterai, tanggal, dan schema siap. Database belum siap dijelaskan di popup.
+6. docs/templates/mou-transrent-{fisik,digital}.{docx,pdf}
+   Kata simulasi diganti penjelasan demonstrasi akademik. Dua PDF tetap empat halaman,
+   diekspor melalui Word dan seluruh halaman dirender/diperiksa. Area TTD/meterai tetap.
+7. supabase/migrations/013_online_mou_draft_terms.sql
+   Upgrade RPC persetujuan agar menerima ketentuan v2. Migration 012 tetap utuh.
+   Bukti lama, final MoU, status, izin GPS, role/grant tidak diubah.
+8. supabase/transrent-update-bundle.sql
+   Satu file: preflight duplicate/nominal, backup privat bertimestamp data+metadata,
+   migration 010-013 yang belum terpasang, verifikasi versi/RPC/grant/indeks.
+   Backup di-commit sebelum satu transaksi migration. Versi terpasang dilewati.
+   Rerun sukses tidak membuat snapshot tambahan. Tidak replay 001-009 atau seed.
+9. supabase/04_verify.sql, supabase/tests/check.mjs, backend/src/http.test.js
+   Verifikasi menerima snapshot bertimestamp. Regresi mencakup fresh upgrade, mulai
+   dari 010 atau 012, stale terms v1, replay, seluruh download, tenant/role/isolation.
+10. docs/SQL_EDITOR_HANDOFF.md dan dokumen ini
+    Instruksi terbaru memakai satu bundle. Owner tetap menjalankan SQL Editor sendiri.
+
+Bukti: 16/16 backend tests, frontend build 74 modules, suite PostgreSQL PGlite
+terisolasi fresh/010/012 dan rerun lulus. Online PDF dua halaman; semua PDF baru
+tanpa kata simulasi pada isi. PostGIS stub; data live dan concurrency nyata belum diuji.
+Deep health live sebelum rollout: reachable=true, schemaReady=false, versi terpasang
+[]; migration live belum dijalankan agen. File .env dan bukti lama tidak diubah.
+
+
+## Verifikasi setelah owner menjalankan bundle (14 Oktober 2026, 03:20 UTC)
+
+Screenshot owner menunjukkan private snapshot transrent_backup_20261014_031518_751799.
+Read-only backend deep health: HTTP 200, ok=true, reachable=true, schemaReady=true,
+marker 010/011/012/013 terpasang. Data API metadata HTTP 200 menampilkan ketiga RPC
+transrent_transaction, transrent_mou dan transrent_mou_simulation; kolom MoU baru
+dapat dibaca. Ini menggantikan checkpoint schemaReady=false/MIGRATION_REQUIRED.
+Agen tidak menjalankan migration atau transaksi bisnis live. Transaksi aktual dan
+validasi ulang constraint/grant melalui SQL belum diuji secara independen. Dua MoU
+masih ACTIVE; fitur online baru memerlukan DRAFT/PENDING dari Admin Pusat.
+
+
+## Pemeriksaan fitur melalui simulasi (14 Oktober 2026, 03:26 UTC)
+
+16/16 regresi backend, 34 pemeriksaan HTTP tambahan, expiry fixture, SQL PGlite
+terisolasi dan frontend build 74 modules lulus. Simulasi API in-memory tanpa Supabase
+credentials; tidak ada transaksi bisnis live. Live read-only health/search HTTP200,
+schemaReady=true. Contoh: 1 hari telat Rp112.500 + kerusakan Rp10.000 = Rp122.500,
+refund Rp377.500 dari deposit Rp500.000.
+
+Kekurangan terverifikasi: API pengajuan sengketa tersedia tetapi form frontend dan
+endpoint penyelesaian admin belum ada; refund terkunci sampai sengketa selesai.
+GPS_INGEST_TOKEN aktif belum diisi, sementara source hanya memeriksa token bila env
+berisi nilai. Pembatasan token lulus pada server uji bertoken, tidak pada konfigurasi
+aktif. Provider pembayaran/TTE/meterai/hardware masih belum terintegrasi/teruji.
+Browser klik menyeluruh, Storage/Auth Supabase dan bisnis live belum diuji.
+Tidak ada perubahan logic aplikasi; laporan berada pada output feature-check TXT.
+
+
+## Query akun uji JMT melalui SQL, belum live (14 Oktober 2026)
+
+Owner secara eksplisit meminta pembuatan password melalui SQL. Disiapkan satu file
+output transrent-jmt-login-and-mou.sql, menggantikan query repair yang memerlukan
+Auth user dibuat dahulu. Mencakup pemeriksaan schema Auth/target/role, backup privat,
+create/reset password akun uji menggunakan pgcrypto bcrypt, email confirmed dan
+identity email, profilRENTAL_ADMIN perusahaan yang sudah ada, grant sequence nomor
+MoU serta MoU PENDING bila belum ada. Tidak mengaktifkan perusahaan/GPS, tidak
+menambahkan kendaraan, tidak mengirim email.
+
+Uji PGlite dengan pgcrypto nyata dan fixture schema Auth: password benar cocok,
+password salah ditolak, trigger profil, identity, role, MoU, replay dan perlindungan
+role istimewa lulus. Login Supabase hosted dan schema Auth live belum diverifikasi.
+Script belum dijalankan agen. Direct Auth SQL hanya seed uji sesuai permintaan owner;
+fitur signup aplikasi tetap sebaiknya memakai Auth API resmi.
+
+
+REVISI ALUR PERMINTAAN MOU - 14 OKTOBER 2026
+
+1. frontend/src/App.jsx
+   Admin Pusat: Tambah MoU berubah menjadi Kirim permintaan MoU. Modal hanya
+   perusahaan tujuan, nomor otomatis dan catatan; pilihan status/tanggal/file dihapus.
+   Onboarding perusahaan juga mengirim permintaan tanpa dokumen/tanggal final.
+   Pemilik rental melihat permintaan dan catatan Admin Pusat di menu MoU layanan;
+   persetujuan online/draf dan upload PDF final tetap dilakukan pemilik.
+2. backend/src/data/store.js
+   createGpsAgreement kini mengirim permintaan PENDING, GPSfalse, signed/expires/document
+   null. Role wajib CENTRAL_ADMIN; perusahaan valid; notes maksimal2000 karakter.
+   Dokumen final/tanggal/GPS/initialstatus selainPENDING dari endpoint ini ditolak.
+   Jalur upload owner dan review central tetap terpisah.
+3. backend/src/openapi.js
+   Kontrak request baru: catatan opsional; dokumentasi status/tanggal/file final
+   dihapus dari create request endpoint.
+4. backend/src/http.test.js
+   Memastikan requestPENDING tanpa dokumen/tanggal/GPS, catatan diterima owner,
+   central upload/tanggal melalui request ditolak400, owner kirimrequest ditolak403.
+5. docs/IMPLEMENTATION_STATUS.md, MOU_WORKFLOW.md, IMPLEMENTATION_CHANGES.txt
+   Progress dan alur terbaru dicatat. Tidak ada schema migration tambahan diperlukan.
+
+Bukti:16/16 backendtests dan frontend build74modules lulus. Read-only Supabase
+menunjukkan marker010-013/schemaReadytrue, profil akun JMTroleRENTAL_ADMIN, perusahaan
+PENDING dan satu MoUPENDING; belum ada PDFonline. Akun ini sebelumnya disiapkan lewat
+query owner; agen tidak menjalankan Auth/SQL live. Pengirimanpermintaan hanya di
+aplikasi, tidak mengirim email. KeaslianTTE/meterai, fullbrowser dan bisnislive belum
+diverifikasi. GPS ingest token dan penyelesaian sengketa masih pekerjaan tersisa.
+
+
+======================================================================
+20 OKTOBER 2026 — PEMBAYARAN/PEMBATALAN, SENGKETA, SELISIH DENDA, REPAIR
+======================================================================
+Status: implementasi lokal + regresi otomatis lulus. Migration 014 belum
+dijalankan pada Supabase oleh agen. Tidak ada merge, push, atau seed live.
+Basis: main / 15e08a8 beserta perubahan lokal sebelumnya yang dipertahankan.
+
+1. PEMBAYARAN DAN PEMBATALAN
+- Pembayaran reservasi memeriksa ulang verifikasi customer dari data terkini,
+  perusahaan ACTIVE, MoU ACTIVE/belum kedaluwarsa/izin GPS, GPS READY,
+  maintenance, repair_required dan kesiapan kendaraan. Handover memakai gate sama.
+- Hanya customer pemilik reservasi boleh membayar. Retry pembayaran yang sudah
+  berhasil mengembalikan bukti lama, tanpa menagih ulang.
+- Customer pemilik atau admin perusahaan/pusat dapat membatalkan sebelum
+  handover. Staff dan admin lintas perusahaan ditolak. Alasan wajib 1-2000 karakter.
+- Pembatalan belum dibayar tidak menghasilkan refund. Pembatalan sudah dibayar
+  mengembalikan SELURUH pembayaran melalui simulator akademik, tanpa potongan.
+  Ini aturan demo yang dipilih untuk menyelesaikan alur sebelum handover.
+- Status reservasi CANCELLED, payment PAID menjadi REFUNDED. Nominal/reference
+  pembayaran asli tetap disimpan. Receipt cancellation menyimpan ID, alasan,
+  aktor, waktu, paymentId, refundAmount dan status REFUNDED_SIMULATED.
+- Retry pembatalan mengembalikan receipt yang sama. Reservasi yang dibatalkan
+  tidak dapat dibayar atau di-handover kembali. Rental yang sudah di-handover
+  mengikuti alur return/penyelesaian; tidak dibatalkan lewat endpoint ini.
+- Pembayaran non-simulator diblokir dari refund otomatis; integrasi provider
+  pembayaran riil tidak dibuat dalam pekerjaan ini.
+
+2. PENYELESAIAN SENGKETA
+- Customer melihat denda dan mengajukan sengketa melalui menu Rental & denda.
+- Admin Rental hanya memutuskan perusahaan sendiri; Admin Pusat lintas perusahaan.
+  Customer/staff tidak dapat mengesahkan keputusan admin.
+- ACCEPTED: seluruh denda terkait dihapus (amount=0, fine CANCELLED).
+- REJECTED: nominal denda dipertahankan, fine APPROVED.
+- ADJUSTED: nominal akhir rupiah bulat 0..nominal awal, fine APPROVED.
+- Alasan keputusan wajib. Disimpan original_amount, final_amount, resolved_by,
+  resolution_notes dan resolved_at pada fine_disputes. Keputusan final tidak
+  bisa ditimpa. Retry keputusan identik tidak membuat keputusan baru.
+- Refund deposit dihitung ulang berdasarkan jumlah semua denda non-CANCELLED.
+  Sengketa OPEN/DISPUTED memblokir pelunasan dan penutupan rental.
+- Menghapus kewajiban membayar kerusakan tidak menghapus kondisi rusak fisik.
+
+3. PELUNASAN SELISIH DENDA
+- Formula: fineTotal = SUM(denda non-CANCELLED).
+  depositApplied = MIN(deposit, fineTotal).
+  balanceDue = MAX(0, fineTotal - deposit - finePayment.amount).
+  refundAmount = MAX(0, deposit - fineTotal).
+- Contoh sintetis: deposit Rp500.000, denda Rp800.000 -> selisih Rp300.000.
+  Bila keputusan admin mengubah denda menjadi Rp700.000 -> selisih Rp200.000.
+- Hanya customer pemilik rental membayar melalui simulator. Nominal selalu
+  dihitung server, tidak memakai nominal yang dikirim browser.
+- Satu pembayaran penuh per rental disimpan di fine_payment JSONB dengan ID,
+  provider/reference, amount, paidBy, paidAt dan PAID. Retry bukti yang sama.
+- Pembayaran menjadikan denda final APPROVED; pengajuan sengketa ulang diblokir.
+  UI meminta persetujuan nominal sebelum customer menjalankan pembayaran.
+- Admin tidak dapat menutup rental/refund selama masih ada balanceDue > 0.
+  Status tetap RETURN_PENDING_REVIEW sampai sengketa/selisih selesai.
+- Rental lama yang sudah COMPLETED tetapi memiliki selisih juga dapat dilunasi.
+  Bundle melaporkan jumlahnya untuk rekonsiliasi: jangan menagih ulang jika
+  ternyata pernah dibayar di luar aplikasi. Migrasi tidak mengarang bukti bayar.
+
+4. KENDARAAN RUSAK TIDAK MENJADI AVAILABLE KARENA CANCEL MAINTENANCE
+- vehicles.repair_required adalah penanda kondisi fisik yang persisten.
+  Return dengan damageItems menandainya true, terlepas dari nominal/putusan denda.
+- Kendaraan rusak tetap MAINTENANCE setelah penutupan rental. Pembayaran denda
+  bukan bukti perbaikan. Cancel SERVICE/REPAIR tidak membersihkan flag kerusakan.
+- Hanya penyelesaian REPAIR, dengan tidak ada REPAIR lain aktif, membersihkan
+  flag. Status AVAILABLE juga mensyaratkan GPS READY, tidak ada maintenance
+  aktif lain, tidak ada rental aktif, serta status kendaraan dapat dipulihkan.
+- Menyelesaikan SERVICE biasa tidak membersihkan kerusakan. Jika satu REPAIR
+  selesai saat REPAIR lain belum selesai lalu yang tersisa dibatalkan, flag
+  tetap true: perlu REPAIR selesai yang benar-benar menutup pekerjaan kerusakan.
+- Backfill konservatif untuk data lama: cari kerusakan rental tanpa REPAIR
+  COMPLETED yang waktunya sesudah kerusakan. Flag true; kendaraan AVAILABLE/
+  RESERVED dipindah ke MAINTENANCE. Tidak mengubah rental aktif/INACTIVE.
+  Bila perbaikan lama tidak dicatat, admin perlu mereview dan mencatat REPAIR.
+
+FILE YANG DIUBAH / DITAMBAHKAN DALAM TAHAP INI
+- backend/src/data/store.js: gate pembayaran/handover, cancellation, keputusan
+  sengketa, simulator selisih, ringkasan settlement/list per role, repair lifecycle.
+- backend/src/server.js: tiga endpoint baru (cancel/resolve/fine-payments).
+- backend/src/db.js: readiness wajib marker 014 selain 010-013.
+- backend/src/openapi.js: kontrak endpoint, role, nominal dan error baru.
+- backend/src/data/lifecycle.test.js: regresi uang, role, retry, dispute, repair.
+- backend/src/http.test.js: route HTTP baru, hasil list, refund, maintenance.
+- frontend/src/App.jsx: tombol pembatalan, receipt refund, daftar rental/denda,
+  popup sengketa/keputusan/pelunasan/refund, history, disabled/busy/error,
+  fokus keyboard popup, jenis SERVICE/REPAIR dan indikator perlu REPAIR.
+  Admin Pusat mendapat akses menu reservasi, rental/sengketa, maintenance.
+- supabase/migrations/014_financial_settlement_repair.sql: kolom baru,
+  unique index satu sengketa OPEN per fine, backfill kerusakan, RPC v2.
+- supabase/transrent-update-bundle.sql: satu file preflight+snapshot privat+
+  selective migration 010-014+verifikasi. Versi terpasang dilewati.
+- supabase/04_verify.sql: pemeriksaan marker/RPC/kolom/kerusakan AVAILABLE.
+- supabase/tests/check.mjs: regresi SQL untuk semua alur baru dan partial update.
+- supabase/tests/legacy-backfill.mjs: reproduksi bug pada 010-013, upgrade 014,
+  verifikasi backfill, isi snapshot sebelum migrasi dan replay yang dilewati.
+- supabase/tests/package.json: menjalankan kedua regresi SQL.
+- README.md, docs/SQL_EDITOR_HANDOFF.md, docs/IMPLEMENTATION_STATUS.md,
+  docs/IMPLEMENTATION_CHANGES.txt: panduan, checkpoint dan uraian ini.
+
+KONTRAK API BARU
+POST /api/reservations/:id/cancel { reason }
+POST /api/disputes/:id/resolve { decision, notes, amount? }
+POST /api/rentals/:id/fine-payments/simulate {}
+API reservasi/rental yang lama tetap digunakan untuk membaca receipt/settlement.
+Backend Supabase memanggil transrent_transaction_v2. Wrapper RPC lama diteruskan
+ke implementasi yang sama agar guard tidak bisa dilompati melalui RPC lama.
+Keduanya hanya untuk service_role; actor berasal dari sesi backend terverifikasi.
+Semua aksi mengunci vehicle dahulu lalu baris transaksi terkait. Inspection
+upload dan bukti sebelumnya tetap memakai mekanisme atomic/cleanup yang ada.
+
+BUKTI PEMERIKSAAN
+- Backend npm test: 19/19 lulus, termasuk HTTP localhost dengan akun sintetis.
+  Konfigurasi testing-env mematikan Supabase sehingga tidak menulis data live.
+- SQL npm test: check.mjs + legacy-backfill.mjs lulus dalam PGlite terisolasi.
+- Partial update dari marker 013 ke 014 lulus; replay tidak menambah snapshot.
+- Frontend npm run build: lulus, 74 modules. Tidak ada dependency baru.
+- Baca saja Supabase 20 Oktober 2026: reachable=true, marker 010/011/012/013.
+  Target sesuai backend/.env; fingerprint URL dfcce416dcb686d3. 014 belum live.
+- Tidak ada listener web 4100/5174 saat pemeriksaan lokal tahap ini.
+- Pemeriksaan browser interaktif/keyboard nyata belum dilakukan; build bukan
+  bukti tampilan semua ukuran layar. Warna memakai token/komponen existing;
+  ini bukan sertifikasi aksesibilitas/kontras seluruh aplikasi.
+- PostGIS memakai stub pada PGlite. Paralelisme koneksi PostgreSQL nyata,
+  transaksi bisnis hosted, Auth/Storage hosted dan uang riil tidak diuji.
+
+HANDOFF / RISIKO KOMPATIBILITAS
+Jalankan hanya supabase/transrent-update-bundle.sql di SQL Editor proyek yang
+sesuai backend/.env. Hentikan backend ketika menjalankan bundle. Jangan jalankan
+001-009/seed/migration individual lagi. Setelah BUNDLE_OK dan marker 014 tersedia,
+start/restart backend dan frontend, lalu refresh browser. Kode baru membutuhkan
+014: fungsi transaksi mengembalikan MIGRATION_REQUIRED bila RPC v2 belum tersedia.
+Snapshot privat dalam database yang sama bukan backup offsite atau restore otomatis.
+Jika error: ROLLBACK; baca error, perbaiki sebab, ulangi seluruh bundle. Jangan
+menghapus data duplikat otomatis. Marker tidak berarti database lain sudah terupdate.
+Fitur audit lain (GPS auth/revocation, riwayat/stage MoU, KYC, jadwal, sesi, dll.)
+tidak dikerjakan pada tahap empat perbaikan ini. Hindsight bank hermes-academic
+terverifikasi tetapi tool 401; checkpoint sanitasi local_pending, bukan tersimpan.
+
+Handoff terverifikasi setelah pemasangan: 17 file hash-verified disalin ke repo;
+backend baru membaca Supabase dengan schemaReady=false, MIGRATION_REQUIRED,
+required010-014 dan applied010-013. Tidak ada SQL live dieksekusi.
+
+
+HASIL SIMULASI TRANSRENT — 20 OKTOBER 2026
+
+Web: http://localhost:5174/ (tetap hidup)
+Backend: http://localhost:4100/ ; schemaReady=true, marker010-014 terdeteksi.
+Simulasi berjalan melalui web dengan login Supabase asli (akun customer QA dan
+admin rental demo), lalu hasil dan guard diverifikasi lagi melalui API aplikasi.
+Tidak ada SQL dijalankan oleh agen. Pembayaran/refund memakai SIMULATED_GATEWAY.
+
+HASIL
+1. Pembayaran reservasi Rp800.000 -> CONFIRMED. Retry bukti pembayaran yang sama.
+2. Pembatalan sebelum bayar -> CANCELLED, refund Rp0 / NOT_REQUIRED.
+3. Pembatalan sesudah bayar sebelum handover -> CANCELLED,
+   refund penuh Rp800.000 / REFUNDED_SIMULATED. Retry receipt sama.
+   Bayar/handover setelah CANCELLED ditolak409.
+4. Reservasi kedua dibayar -> handover -> return dengan kerusakan sintetis
+   Rp800.000. Deposit Rp500.000, selisih Rp300.000, refund Rp0.
+   Pembatalan setelah handover ditolak409. Tutup rental sebelum lunas ditolak409.
+5. Customer mengajukan sengketa lewat popup -> OPEN / DISPUTED.
+   Pelunasan dan penutupan selama sengketa terbuka ditolak409.
+   Customer mencoba mengambil keputusan admin ditolak403.
+6. Admin rental menyesuaikan denda menjadi Rp700.000 dari web, dengan alasan.
+   Original/final amount, aktor dan timestamp tersimpan. Selisih menjadi Rp200.000.
+   Retry keputusan identik aman; mencoba menimpa keputusan final ditolak409.
+7. Customer centang persetujuan dan melunasi Rp200.000 lewat web.
+   finePayment PAID, saldo selisih Rp0. Retry bukti yang sama.
+   Sengketa ulang setelah pelunasan ditolak409.
+8. Admin konfirmasi refund Rp0 & tutup rental dari web -> COMPLETED.
+   Kendaraan masih MAINTENANCE dengan repair_required=true.
+9. Jadwal REPAIR dibatalkan -> tetap MAINTENANCE.
+   REPAIR baru dimulai dan diselesaikan -> AVAILABLE, repair_required=false.
+
+DATA UJI
+Satu customer Auth/profil sintetis, satu cabang/GPS/kendaraan QA, tiga reservasi
+(dua dibatalkan, satu rental COMPLETED), dua task REPAIR (CANCELLED/COMPLETED).
+Semuanya berlabel QA Finance 20261020151158, pada perusahaan demo BaliMove.
+Data QA dipertahankan agar hasil dapat dilihat di aplikasi. Tidak memakai dokumen
+identitas/tanda tangan pribadi: bukti inspeksi adalah gambar sintetis.
+Customer QA dibuat sebagai fixture VERIFIED via Auth/Data API, jadi ini tidak
+menguji alur signup, verifikasi KYC atau onboarding MoU.
+
+PERBAIKAN KECIL SAAT UJI
+frontend/src/App.jsx: tombol Keluar ditambahkan di header agar tetap terlihat
+pada lebar browser sempit; tombol navigasi diberi title/aria-label sesuai menu.
+Sebelumnya footer/sidebar menyembunyikan tombol keluar pada viewport kecil.
+Logout/login bergantian customer/admin terbukti bekerja lewat UI.
+Build frontend lulus,74modules. Tidak ada migrasi SQL baru untuk perbaikan UI ini.
+Skrip pengujian maintenance awalnya mengharapkan200 padahal endpoint benar201;
+sudah dikoreksi dan dilanjutkan memakai task QA yang telah dibuat, tanpa duplikasi.
+
+BATAS HASIL
+Skenario browser mencakup sengketa ADJUSTED. ACCEPTED/REJECTED sudah tercakup
+regresi terisolasi sebelumnya, tidak diulang live pada sesi ini. Tidak ada uang
+nyata, uji concurrency/load, atau klaim seluruh proses bisnis lain sudah lengkap.
+Tidak ada listener yang dihentikan: backend dan frontend tetap hidup.
+Hindsight bank hermes-academic terverifikasi; search/list401. Checkpoint disimpan
+lokal apabila ingest juga401, bukan dianggap accepted/processed/searchable.
+
+BUKTI
+outputs/transrent-finance-simulation-2026-10-20.json
+outputs/transrent-payment-cancellation-2026-10-20.png
+outputs/transrent-dispute-open-2026-10-20.png
+outputs/transrent-fine-paid-2026-10-20.png
+
+Catatan login: percobaan akun Customer demo bawaan ditolak401; penyebab akun/password
+belum diselidiki atau diubah. Akun QA baru berhasil login. Browser ditinggalkan
+pada akun customer QA, menu Rental & denda, dengan rental Selesai/saldoRp0.
+Screenshot hasil akhir: outputs/transrent-finance-completed-2026-10-20.png.
+Hindsight ingest juga401; checkpoint sanitasi local_pending, bukan accepted.
+
+
+TRANSRENT — RINCIAN IMPLEMENTASI 21 OKTOBER 2026
+Status: implementasi lokal. SQL 015–016 disiapkan untuk dijalankan pemilik melalui Supabase SQL Editor; belum dieksekusi pada database hosted oleh agen.
+
+1. TRANSAKSI INTERNAL
+Customer membuat invoice dari reservasi atau selisih denda. Nominal dihitung server, ada nomor TRX, waktu jatuh tempo, dan referensi. Customer menyatakan pembayaran (DECLARED), lalu admin rental yang bersangkutan atau admin pusat menyetujui/menolak dengan catatan. Hanya persetujuan admin yang membuat PAID dan mengonfirmasi reservasi. Retry tidak menduplikasi invoice/pembayaran. Invoice expired tidak dapat disetujui. Deklarasi memperpanjang batas pemeriksaan 24 jam satu kali. Tidak ada uang nyata, rekening bank, gateway atau panggilan Midtrans. Tombol bayar simulator lama dinonaktifkan pada mode normal.
+Pembatalan yang sudah dibayar menghasilkan REFUND_PENDING. Admin wajib mencatat referensi payout sebelum REFUNDED. Persetujuan perhitungan deposit dipisah dari pencatatan pengembalian deposit positif; rental ditutup setelah payout. Refund nol tetap dapat ditutup setelah review. Sengketa terbuka mengunci penyelesaian; deklarasi pelunasan mengunci perubahan sengketa agar nominal tidak berubah di tengah pembayaran. Kendaraan rusak tidak otomatis AVAILABLE.
+
+2. JADWAL DAN HARGA
+Tanggal bisnis Asia/Makassar (UTC+8). Reservasi lampau ditolak, serah terima hanya dalam periode sewa, pengembalian menggunakan hari aktual. Denda keterlambatan memakai harga snapshot reservasi, bukan tarif kendaraan yang mungkin sudah diubah. Tanggal akhir MoU berlaku sampai akhir hari Bali.
+
+3. MOU DAN GPS
+Admin pusat mengirim permintaan; owner rental mengunggah PDF final; admin pusat review, meminta revisi dengan alasan, mengaktifkan atau mencabut dengan alasan. Stage: WAITING_OWNER, WAITING_REVIEW, REVISION_REQUIRED, ACTIVE, EXPIRED, REVOKED, ARCHIVED. Satu permintaan terbuka per perusahaan. Renewal mereferensikan MoU aktif sebelumnya; aktivasi baru menggantikan pendahulunya secara atomik. Dokumen terminal tidak dapat dibuka ulang. Upload revisi mengarsipkan metadata versi sebelumnya, tersedia download versi dengan kontrol akses. Dokumen dan TTD/meterai belum diverifikasi ke penyedia resmi.
+Migration 015 mengarsipkan permintaan terbuka lama yang duplikat: prioritaskan yang sudah memiliki upload, kemudian yang terakhir diperbarui. Tidak menghapus PDF atau data asli; mohon review hasil archived_duplicate_count.
+GPS ingest wajib token acak minimal 32 karakter; tidak terkonfigurasi = 503, token salah = 401. GPS harus READY, rental ACTIVE, perusahaan ACTIVE, dan MoU aktif serta belum kedaluwarsa. Pengecekan dan penyimpanan atomik. Customer hanya dapat melihat lokasi rental aktifnya dengan persetujuan GPS yang masih berlaku; RLS diperketat. Pemetaan satu perangkat GPS ke satu kendaraan; duplikat existing menghentikan migrasi untuk diperbaiki manual.
+
+4. AKUN ADMIN RENTAL DAN SESI
+Pembuatan perusahaan memakai creationKey untuk retry tanpa duplikasi. Checkpoint onboarding frontend menyimpan kemajuan, bukan password/token undangan. Undangan memiliki tabel status PREPARING/SENT/FAILED/ACCEPTED, Auth user id, lease proses, retry dan kirim ulang pada perusahaan yang sama. Role existing tidak ditimpa sembarang. Callback invite/recovery memungkinkan owner membuat password sendiri. Mode demo tidak mengirim email dan tidak membuat kredensial Auth nyata. Email provider, redirect allowlist, dan callback email hosted belum diuji end-to-end.
+Session refresh single-flight, retry token yang dirotasi, logout bila refresh ditolak, dan perlindungan hasil refresh terlambat setelah ganti akun/logout. Kegagalan memuat data ditampilkan beserta retry; tidak diam-diam dianggap data kosong. Login hosted tidak menawarkan akun seed demo yang belum tentu ada.
+
+5. MASTER DAN DASHBOARD
+Menu master admin: tambah/ubah cabang (alamat/koordinat), perangkat GPS, kendaraan dan tarif/deposit. Validasi nominal, tahun, kursi, perusahaan/cabang/perangkat, serta status. Perubahan kendaraan dengan booking/rental aktif ditolak. Status maintenance/repair tidak dapat diakali menjadi AVAILABLE. Admin rental dibatasi perusahaannya; admin pusat lintas perusahaan. Dashboard mencakup perusahaan nonaktif sesuai lingkup, bukan hanya katalog aktif. Tidak menambahkan kewajiban foto.
+
+6. FILE UTAMA
+backend/src/operations.js — ledger transaksi dan master data; demo dan adapter RPC.
+backend/src/invites.js — undangan, retry, lease dan callback password.
+backend/src/server.js — endpoint baru, token GPS, pengaman write jika migrasi belum lengkap.
+backend/src/data/store.js — jadwal, settlement/refund, MoU, GPS, scope dashboard, creationKey.
+backend/src/auth.js, db.js — refresh/session dan readiness 010–016.
+backend/src/payments.js, testing-env.js — default INTERNAL_MANUAL; simulator lama hanya regresi.
+backend/src/mou.js, mou-online.js — tahap upload, versi dokumen dan tanggal Bali.
+backend/src/openapi.js — dokumentasi endpoint baru.
+frontend/src/BusinessPages.jsx — invoice, review, master, undangan dan callback password.
+frontend/src/App.jsx — integrasi menu/action, tahap MoU, checkpoint onboarding, error/retry.
+frontend/src/api.js — refresh aman dan helper tanggal.
+frontend/src/styles.css — dialog sesuai gaya aplikasi.
+simulator/gps-simulator.js — token wajib dan validasi interval.
+supabase/migrations/015_business_workflows.sql — MoU/GPS/master/undangan.
+supabase/migrations/016_internal_payment_orders.sql — ledger dan settlement atomik.
+supabase/transrent-business-update-bundle.sql — SATU SQL untuk database existing 014.
+supabase/transrent-bootstrap.sql — HANYA database kosong, tanpa seed akun/data demo.
+backend/src/internal-http.test.js, http.test.js; frontend/src/api.test.mjs; supabase/tests/business.mjs, bootstrap.mjs, package.json — regresi lokal.
+docs/DEFERRED_PHOTO_VALIDATION.md — backlog verifikasi foto.
+README.md, docs/SQL_EDITOR_HANDOFF.md, IMPLEMENTATION_STATUS.md, IMPLEMENTATION_CHANGES.txt — panduan dan perubahan.
+
+7. AKTIVASI
+Pada project Supabase TransRent yang sama dengan backend/.env, pastikan migration 014 sudah ada. Hentikan backend saat migrasi. Jalankan hanya transrent-business-update-bundle.sql; hasil yang diharapkan BUSINESS_BUNDLE_OK dan marker 015/016. Bundle membuat snapshot privat di database sebelum perubahan; snapshot bukan backup offsite. Bundle replay melewati migrasi yang sudah tercatat. Jangan jalankan bootstrap di database existing. Tidak perlu mengulang bundle 010–014 yang sudah dijalankan.
+Restart backend dan cek /api/health/deep: schemaReady harus true. Sebelum migrasi baru, write ditolak 503 untuk mencegah fungsi lama menerima proses baru. Isi GPS_INGEST_TOKEN lokal minimal 32 karakter pada backend dan simulator bila ingin demo GPS. Jangan kirim secret melalui chat. PAYMENT_MODE normal INTERNAL_MANUAL (default); PAYMENT_PROVIDER lama tidak mengaktifkan gateway. Sesuaikan FRONTEND_ORIGIN dan Supabase Auth redirect allowlist untuk undangan.
+
+8. BATASAN / PEKERJAAN TERTUNDA
+Semua fitur yang memerlukan foto sebagai bukti/validasi sengaja ditunda. Upload foto yang sudah ada hanya placeholder opsional; tidak ada OCR, face match, deteksi keaslian KTP/SIM, verifikasi kerusakan visual, atau bukti transfer foto. Catatan administrasi tidak menyatakan foto terverifikasi.
+Pengujian SQL lokal memakai PGlite dengan pengganti fungsi PostGIS/Auth/Storage. Koneksi paralel nyata, provider email, penerbit meterai/TTD dan gateway tidak diuji. Tidak ada SQL hosted yang dieksekusi dalam tugas ini. Data transaksi simulator lama tetap tersimpan dengan provider historisnya, tidak diubah menjadi transaksi bank nyata.
+
+
+VERIFIKASI AKHIR — 21 Oktober 2026 09:28 UTC+8
+Backend: 20/20 tes lulus. Frontend session API: 3/3 lulus. Build Vite: lulus (75 modul). SQL lokal: check, legacy-backfill, business dan bootstrap seluruhnya lulus. Tes HTTP awal sempat timeout startup saat paralel; waktu tunggu disesuaikan dan seluruh suite lulus saat diulang.
+UI: Admin Rental lokal dapat membuka master kendaraan/tarif, dialog edit tanpa foto wajib, daftar transaksi dan detail invoice sintetis. Tidak menguji seluruh interaksi UI pada hosted.
+Deployment: 33 file dipasang dengan hash guard dan backup. Runtime .env tidak diubah. Web utama HTTP 200, backend health OK dengan INTERNAL_MANUAL. Database terjangkau; marker existing hanya 010–014, schemaReady=false dan write guard HTTP503 sampai owner menjalankan 015–016. Tidak mengeksekusi SQL hosted.
+Hindsight academic: native ingest ditolak HTTP401 (API key tidak terkonfigurasi); status local_pending, belum accepted/processed/searchable.
