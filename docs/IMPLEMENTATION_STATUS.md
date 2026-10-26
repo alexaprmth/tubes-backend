@@ -276,3 +276,14 @@ Pembayaran masih INTERNAL_MANUAL; GPS memakai tiga titik sintetis dan token khus
 ## 22 Oktober 2026 — persiapan publikasi feature-update
 Daftar kerja terkini: docs/REMAINING_WORK_AND_PLAN.md. Evidence hosted15tahap21Okt disertakan dalam docs/verification/2026-10-21-hosted-workflows.json. Read-only22Okt mengonfirmasi010–016 dan GPSduplikat0. Tes aplikasi tidak diulang pada publikasi ini; tidak merge main atau menjalankan SQL. Runtime .env dan sumber dokumen pribadi tetap lokal.
 
+## 26 Oktober 2026 — GPS persisten diimplementasikan dan diuji
+
+Source dasar main/5fd0db5 dengan perubahan lokal; checkpoint25Okt dan sumber PDF untracked dipertahankan. Simulator memakai helper konfigurasi yang membaca backend/.env berdasarkan lokasi modul, dengan validasi token/perangkat/interval dan override proses yang eksplisit. Token acak kuat64karakter dibuat dan disimpan di .env yang diabaikan Git; perangkat dipilih dari fixture QA existing. Root menyediakan start:gps dan test:gps; detail di [GPS_SETUP.md](GPS_SETUP.md).
+
+User mengizinkan uji restart backend/simulator. Dua tes konfigurasi lulus. Backend Supabase schemaReadytrue/010–016; satu rental QA baru disiapkan lewat API aplikasi tanpa SQL atau transfer nyata. Kedua proses dihentikan dan dimulai ulang tanpa token override; telemetry baru setelah timestamp restart tersimpan, token tetap sama dan token salah ditolak401. Rental QA dan proses dibiarkan aktif untuk demo; tidak menyentuh rental pengguna lain.
+
+Tidak commit/merge/push, tidak menjalankan migration, tidak menguji GPS fisik atau MoU revoke/expiry ulang. Konfigurasi bertahan pada restart aplikasi; tidak memasang Windows service/autorun. Evidence: docs/verification/2026-10-26-gps-persistence.json. Handoff: .workflow/handoffs/2026-10-26-gps-persistence.txt. Hindsightacademic tidak tersedia; checkpoint local_pending, bukan accepted/processed/searchable. CBM tidak dipakai; freshnessunknown. Lanjut berikutnya hanya setelah permintaan pemilik.
+
+### 26 Oktober 2026 — hasil final restart GPS
+
+Restart final kedua proses14:47:23UTC+8; titik GPS baru14:47:36 dan titik lanjutan14:48:16 tersimpan di Supabase. Token acak persisten tidak berubah dalam siklus final; token salah401, backendReadytrue. Dua tes konfigurasiPASS, termasuk token kosong tidak membaca baris berikutnya. Pemeriksaan token aktual pada source/dokumen publik bersih dan .env tetap diabaikan Git. Bukti final menggantikan hasil sementara sebelum koreksi parser setup. Backend/simulator serta rental QA dibiarkan aktif; frontend tidak dinyalakan. Tidak ada SQL, commit, merge atau push. Handoff selesai: `.workflow/handoffs/2026-10-26-gps-persistence.txt`; Hindsight key `transrent-gps-final-restart-20261026-5fd0db5-r1` local_pending/401, accepted=false, processed/searchableunknown. Tunggu instruksi eksplisit sebelum pekerjaan berikutnya.

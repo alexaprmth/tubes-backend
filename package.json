@@ -7,6 +7,9 @@
     "build": "npm --prefix frontend run build",
     "test": "npm --prefix backend test",
     "dev:backend": "npm --prefix backend run dev",
-    "start:backend": "npm --prefix backend run start"
-  }
+    "start:backend": "npm --prefix backend run start",
+    "start:gps": "node simulator/gps-simulator.js",
+    "test:gps": "node --test simulator/config.test.js"
+  },
+  "type": "module"
 }

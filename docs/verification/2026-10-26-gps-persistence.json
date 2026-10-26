@@ -1,0 +1,47 @@
+{
+  "phases": [
+    {
+      "phase": "first-start",
+      "verifiedAt": "2026-10-26T06:44:39.967Z",
+      "tokenUnchanged": true,
+      "telemetryCount": 42,
+      "lastPoint": "2026-10-26T14:44:31.689401+08:00",
+      "wrongTokenStatus": 401,
+      "backendReady": true
+    },
+    {
+      "phase": "final-restart",
+      "verifiedAt": "2026-10-26T06:47:43.525Z",
+      "tokenUnchanged": true,
+      "telemetryCount": 60,
+      "lastPoint": "2026-10-26T14:47:36.366205+08:00",
+      "wrongTokenStatus": 401,
+      "backendReady": true
+    },
+    {
+      "phase": "final-continuing-telemetry",
+      "verifiedAt": "2026-10-26T06:48:24.839Z",
+      "tokenUnchanged": true,
+      "telemetryCount": 64,
+      "lastPoint": "2026-10-26T14:48:16.384041+08:00",
+      "wrongTokenStatus": 401,
+      "backendReady": true
+    }
+  ],
+  "date": "2026-10-26",
+  "restart_at": "2026-10-26T14:47:23.2879379+08:00",
+  "database": "Configured Supabase;read-only schema010-016ready",
+  "unit_tests": "2/2 PASS including empty-token-line regression",
+  "token_generated_strong_random": true,
+  "token_value_published": false,
+  "synthetic_data_only": true,
+  "qa_rental_left_active": true,
+  "direct_sql_executed": false,
+  "limitations": [
+    "No Windows autorun installed",
+    "No MoU revoke/expiry rerun",
+    "No physical GPS",
+    "No real transfer",
+    "No application-wide regression rerun"
+  ]
+}

@@ -1,3 +1,7 @@
+## GPS setelah restart — 26 Oktober 2026
+
+Konfigurasi lokal backend dan simulator berbagi `backend/.env`. Jalankan `npm run start:backend` dan `npm run start:gps` pada terminal terpisah. Panduan dan batas pengujian: [GPS_SETUP.md](docs/GPS_SETUP.md). Jangan commit token. Restart dua proses telah diverifikasi menerima titik QA baru di Supabase; ini bukan autorun Windows.
+
 # Status publikasi — 22 Oktober 2026
 
 Branch `feature-update` memuat workflow internal terbaru. Daftar pekerjaan yang belum selesai dan urutan implementasi ada di [rencana kerja](docs/REMAINING_WORK_AND_PLAN.md).

@@ -1,10 +1,6 @@
-const apiUrl = process.env.TRANSRENT_API_URL || 'http://localhost:4100/api';
-const deviceId = process.env.GPS_DEVICE_ID || 'GPS-AVANZA-01';
-const gpsToken = process.env.GPS_INGEST_TOKEN || '';
-const intervalMs = Number(process.env.GPS_INTERVAL_MS || 10_000);
+import { loadGpsConfig } from './config.js';
 
-if (gpsToken.length < 32) throw new Error('Isi GPS_INGEST_TOKEN minimal 32 karakter, sama dengan backend.');
-if (!Number.isFinite(intervalMs) || intervalMs < 1000) throw new Error('GPS_INTERVAL_MS minimal 1000 ms.');
+const { apiUrl, deviceId, gpsToken, intervalMs } = loadGpsConfig();
 
 const routes = {
   'GPS-AVANZA-01': { latitude: -8.7179, longitude: 115.1682 },

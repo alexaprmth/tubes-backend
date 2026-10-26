@@ -658,3 +658,15 @@ Backend: 20/20 tes lulus. Frontend session API: 3/3 lulus. Build Vite: lulus (75
 UI: Admin Rental lokal dapat membuka master kendaraan/tarif, dialog edit tanpa foto wajib, daftar transaksi dan detail invoice sintetis. Tidak menguji seluruh interaksi UI pada hosted.
 Deployment: 33 file dipasang dengan hash guard dan backup. Runtime .env tidak diubah. Web utama HTTP 200, backend health OK dengan INTERNAL_MANUAL. Database terjangkau; marker existing hanya 010–014, schemaReady=false dan write guard HTTP503 sampai owner menjalankan 015–016. Tidak mengeksekusi SQL hosted.
 Hindsight academic: native ingest ditolak HTTP401 (API key tidak terkonfigurasi); status local_pending, belum accepted/processed/searchable.
+
+## 26 Oktober 2026 — GPS persisten diimplementasikan dan diuji
+
+Source dasar main/5fd0db5 dengan perubahan lokal; checkpoint25Okt dan sumber PDF untracked dipertahankan. Simulator memakai helper konfigurasi yang membaca backend/.env berdasarkan lokasi modul, dengan validasi token/perangkat/interval dan override proses yang eksplisit. Token acak kuat64karakter dibuat dan disimpan di .env yang diabaikan Git; perangkat dipilih dari fixture QA existing. Root menyediakan start:gps dan test:gps; detail di [GPS_SETUP.md](GPS_SETUP.md).
+
+User mengizinkan uji restart backend/simulator. Dua tes konfigurasi lulus. Backend Supabase schemaReadytrue/010–016; satu rental QA baru disiapkan lewat API aplikasi tanpa SQL atau transfer nyata. Kedua proses dihentikan dan dimulai ulang tanpa token override; telemetry baru setelah timestamp restart tersimpan, token tetap sama dan token salah ditolak401. Rental QA dan proses dibiarkan aktif untuk demo; tidak menyentuh rental pengguna lain.
+
+Tidak commit/merge/push, tidak menjalankan migration, tidak menguji GPS fisik atau MoU revoke/expiry ulang. Konfigurasi bertahan pada restart aplikasi; tidak memasang Windows service/autorun. Evidence: docs/verification/2026-10-26-gps-persistence.json. Handoff: .workflow/handoffs/2026-10-26-gps-persistence.txt. Hindsightacademic tidak tersedia; checkpoint local_pending, bukan accepted/processed/searchable. CBM tidak dipakai; freshnessunknown. Lanjut berikutnya hanya setelah permintaan pemilik.
+
+### 26 Oktober 2026 — hasil final restart GPS
+
+Restart final kedua proses14:47:23UTC+8; titik GPS baru14:47:36 dan titik lanjutan14:48:16 tersimpan di Supabase. Token acak persisten tidak berubah dalam siklus final; token salah401, backendReadytrue. Dua tes konfigurasiPASS, termasuk token kosong tidak membaca baris berikutnya. Pemeriksaan token aktual pada source/dokumen publik bersih dan .env tetap diabaikan Git. Bukti final menggantikan hasil sementara sebelum koreksi parser setup. Backend/simulator serta rental QA dibiarkan aktif; frontend tidak dinyalakan. Tidak ada SQL, commit, merge atau push. Handoff selesai: `.workflow/handoffs/2026-10-26-gps-persistence.txt`; Hindsight key `transrent-gps-final-restart-20261026-5fd0db5-r1` local_pending/401, accepted=false, processed/searchableunknown. Tunggu instruksi eksplisit sebelum pekerjaan berikutnya.

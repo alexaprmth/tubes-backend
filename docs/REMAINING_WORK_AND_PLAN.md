@@ -14,7 +14,7 @@ Diperbarui: **22 Oktober 2026**. Branch publikasi: `feature-update`.
 
 | Urutan | Pekerjaan yang belum selesai | Langkah kerja | Syarat selesai |
 |---|---|---|---|
-| 1 — kesiapan demo | Konfigurasi GPS yang bertahan setelah restart | Simpan token acak minimal32karakter hanya di `.env` lokal backend dan lingkungan simulator; uji restart dan rental aktif yang mempunyai izin MoU | Telemetry diterima setelah restart, token salah ditolak, pencabutan/expiry MoU menutup akses; tidak ada secret di Git |
+| 1 — implementasi dan uji restart selesai26Okt | Konfigurasi GPS persisten | Backend/simulator berbagi backend/.env lokal; [panduan GPS](GPS_SETUP.md) dan [bukti uji](verification/2026-10-26-gps-persistence.json) | 2tes konfigurasiPASS; titik QA baru diterima setelah kedua proses restart; token tetap dan token salah401. Revocation/expiry MoU hosted tidak diuji ulang pada sesi ini; tetap masuk verifikasi MoU/regresi. |
 | 2 — onboarding | Pembuktian email undangan dan recovery pada Supabase Auth nyata | Atur redirect allowlist dan provider email; gunakan inbox uji milik pemilik; uji invite, set password, link expired, resend dan retry setup gagal | Owner dapat menyetel password dan login RENTAL_ADMIN perusahaan yang benar, tidak ada perusahaan/akun ganda atau perubahan role akun existing |
 | 3 — MoU | Verifikasi end-to-end dokumen final dan semua transisi hosted | Gunakan perusahaan QA; request → owner upload PDF → review/revisi → upload versi baru → aktivasi → renewal/revoke/expiry; periksa private download dan tenant scope | Seluruh transisi, versi/hash PDF, alasan revisi dan penghentian GPS sesuai aturan; PDF draf tidak dianggap MoU resmi |
 | 4 — regresi lanjutan | Cabang keputusan dan kondisi balapan yang belum dibuktikan pada hosted | Uji sengketa ACCEPTED/REJECTED, pembayaran REJECTED/EXPIRED, retry/double-click dan permintaan bersamaan, session refresh lintas peran serta akses lintas perusahaan | Bukti idempotensi, tidak ada double booking/payment/refund dan data tidak bocor; ACCEPTED/REJECTED lokal tidak disalahklaim sebagai hostedPASS |
@@ -36,3 +36,5 @@ Urutan1–5 adalah urutan penyelesaian yang disarankan, bukan klaim bug baru mau
 ## Batas publikasi
 
 Branch berisi kode, template aplikasi, migration/bundle SQL dan dokumentasi; tidak mencakup `.env`, token/session QA, database backup, screenshot data pengguna atau dokumen sumber pribadi. Tidak ada merge ke main atau SQL execution dalam proses publikasi. Hindsight academic tidak dapat diakses pada pemeriksaan karena autentikasi401; dokumen sumber dan checkpoint lokal dipakai sebagai evidence.
+
+Checkpoint26Okt: konfigurasi GPS telah diimplementasikan dan diuji restart; target publikasi branch feature-update, penerimaan pemilik untuk penggunaan nyata belum dicatat. Urutan berikutnya adalah email undangan/recovery sesuai arahan pemilik. Jangan mengulang implementasi GPS yang sudah selesai; tetap periksa ulang layanan/database pada sesi baru.
