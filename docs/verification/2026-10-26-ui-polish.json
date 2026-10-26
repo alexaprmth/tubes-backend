@@ -1,0 +1,521 @@
+{
+  "verified_at": "2026-10-26T15:41:37.600564+08:00",
+  "base_commit": "adb95c343e0f3193a3c7a1d23e835d041276357d",
+  "branch": "feature-update",
+  "build": "PASS: vite 75 modules",
+  "frontend_session_tests": "3/3 PASS",
+  "browser": {
+    "date": "2026-10-26",
+    "checks": [
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Overview",
+        "alerts": [],
+        "heading": "Overview",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Transaksi",
+        "alerts": [],
+        "heading": "Transaksi",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Cabang, GPS & kendaraan",
+        "alerts": [],
+        "heading": "Data master",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Reservasi masuk",
+        "alerts": [],
+        "heading": "Reservasi",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Rental berjalan",
+        "alerts": [],
+        "heading": "Rental & penyelesaian",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Armada & GPS",
+        "alerts": [],
+        "heading": "Armada & GPS",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Maintenance",
+        "alerts": [],
+        "heading": "Maintenance",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "MoU layanan",
+        "alerts": [],
+        "heading": "Manajemen MoU GPS",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Overview",
+        "alerts": [],
+        "heading": "Overview",
+        "pageWidth": 378,
+        "width": 390
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Transaksi",
+        "alerts": [],
+        "heading": "Transaksi",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Cabang, GPS & kendaraan",
+        "alerts": [],
+        "heading": "Data master",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Reservasi masuk",
+        "alerts": [],
+        "heading": "Reservasi",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Rental berjalan",
+        "alerts": [],
+        "heading": "Rental & penyelesaian",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Armada & GPS",
+        "alerts": [],
+        "heading": "Armada & GPS",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "Maintenance",
+        "alerts": [],
+        "heading": "Maintenance",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "RENTAL_ADMIN",
+        "menu": "MoU layanan",
+        "alerts": [],
+        "heading": "Manajemen MoU GPS",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "STAFF",
+        "menu": "Handover hari ini",
+        "alerts": [],
+        "heading": "Handover hari ini",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "STAFF",
+        "menu": "Return hari ini",
+        "alerts": [],
+        "heading": "Return hari ini",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "STAFF",
+        "menu": "Tracking kendaraan",
+        "alerts": [],
+        "heading": "Tracking kendaraan",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "STAFF",
+        "menu": "Handover hari ini",
+        "alerts": [],
+        "heading": "Handover hari ini",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "STAFF",
+        "menu": "Return hari ini",
+        "alerts": [],
+        "heading": "Return hari ini",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "STAFF",
+        "menu": "Tracking kendaraan",
+        "alerts": [],
+        "heading": "Tracking kendaraan",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "CUSTOMER",
+        "menu": "Cari kendaraan",
+        "alerts": [],
+        "heading": "Cari kendaraan",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "CUSTOMER",
+        "menu": "Reservasi saya",
+        "alerts": [],
+        "heading": "Reservasi",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "CUSTOMER",
+        "menu": "Rental & denda",
+        "alerts": [],
+        "heading": "Rental & penyelesaian",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "CUSTOMER",
+        "menu": "Transaksi",
+        "alerts": [],
+        "heading": "Transaksi",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "CUSTOMER",
+        "menu": "Profil",
+        "alerts": [],
+        "heading": "Profil akun",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "CUSTOMER",
+        "menu": "Cari kendaraan",
+        "alerts": [],
+        "heading": "Cari kendaraan",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CUSTOMER",
+        "menu": "Reservasi saya",
+        "alerts": [],
+        "heading": "Reservasi",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CUSTOMER",
+        "menu": "Rental & denda",
+        "alerts": [],
+        "heading": "Rental & penyelesaian",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CUSTOMER",
+        "menu": "Transaksi",
+        "alerts": [],
+        "heading": "Transaksi",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CUSTOMER",
+        "menu": "Profil",
+        "alerts": [],
+        "heading": "Profil akun",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Overview global",
+        "alerts": [],
+        "heading": "Overview",
+        "pageWidth": 378,
+        "width": 390
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Transaksi global",
+        "alerts": [],
+        "heading": "Transaksi",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Data master",
+        "alerts": [],
+        "heading": "Data master",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Undangan admin",
+        "alerts": [],
+        "heading": "Undangan admin",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Reservasi",
+        "alerts": [],
+        "heading": "Reservasi",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Rental & sengketa",
+        "alerts": [],
+        "heading": "Rental & penyelesaian",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Maintenance",
+        "alerts": [],
+        "heading": "Maintenance",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Verifikasi customer",
+        "alerts": [],
+        "heading": "Verifikasi customer",
+        "pageWidth": 390,
+        "width": 390
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Perusahaan rental",
+        "alerts": [],
+        "heading": "Perusahaan rental",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Manajemen MoU GPS",
+        "alerts": [],
+        "heading": "Manajemen MoU GPS",
+        "pageWidth": 375,
+        "width": 390
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Overview global",
+        "alerts": [],
+        "heading": "Overview",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Transaksi global",
+        "alerts": [],
+        "heading": "Transaksi",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Data master",
+        "alerts": [],
+        "heading": "Data master",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Undangan admin",
+        "alerts": [],
+        "heading": "Undangan admin",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Reservasi",
+        "alerts": [],
+        "heading": "Reservasi",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Rental & sengketa",
+        "alerts": [],
+        "heading": "Rental & penyelesaian",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Maintenance",
+        "alerts": [],
+        "heading": "Maintenance",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Verifikasi customer",
+        "alerts": [],
+        "heading": "Verifikasi customer",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Perusahaan rental",
+        "alerts": [],
+        "heading": "Perusahaan rental",
+        "pageWidth": 1440,
+        "width": 1440
+      },
+      {
+        "role": "CENTRAL_ADMIN",
+        "menu": "Manajemen MoU GPS",
+        "alerts": [],
+        "heading": "Manajemen MoU GPS",
+        "pageWidth": 1425,
+        "width": 1440
+      }
+    ],
+    "extraChecks": [
+      {
+        "role": "RENTAL_ADMIN_JMT",
+        "menu": "MoU layanan",
+        "alerts": [],
+        "heading": "Manajemen MoU GPS",
+        "pageWidth": 1425,
+        "width": 1440
+      },
+      {
+        "role": "RENTAL_ADMIN_320",
+        "menu": "MoU layanan",
+        "alerts": [],
+        "heading": "Manajemen MoU GPS",
+        "pageWidth": 320,
+        "width": 320
+      },
+      {
+        "role": "RENTAL_ADMIN_320",
+        "menu": "Transaksi",
+        "alerts": [],
+        "heading": "Transaksi",
+        "pageWidth": 320,
+        "width": 320
+      },
+      {
+        "role": "RENTAL_ADMIN_320",
+        "menu": "Cabang, GPS & kendaraan",
+        "alerts": [],
+        "heading": "Data master",
+        "pageWidth": 320,
+        "width": 320
+      }
+    ],
+    "scope": "Visual/navigation read-only smoke checks; no business forms submitted"
+  },
+  "contracts": {
+    "apiContracts": [
+      {
+        "file": "App.jsx",
+        "apiCalls": 24,
+        "unchanged": true
+      },
+      {
+        "file": "BusinessPages.jsx",
+        "apiCalls": 7,
+        "unchanged": true
+      }
+    ],
+    "newTextPairs": [
+      {
+        "fg": "#166354",
+        "bg": "#e6f6f1",
+        "ratio": 6.39
+      },
+      {
+        "fg": "#72500e",
+        "bg": "#fff5d9",
+        "ratio": 6.73
+      },
+      {
+        "fg": "#9a3437",
+        "bg": "#fff0ef",
+        "ratio": 6.49
+      },
+      {
+        "fg": "#2f43a6",
+        "bg": "#edf0ff",
+        "ratio": 7.48
+      },
+      {
+        "fg": "#46556f",
+        "bg": "#edf1f7",
+        "ratio": 6.64
+      },
+      {
+        "fg": "#52627d",
+        "bg": "#ffffff",
+        "ratio": 6.17
+      },
+      {
+        "fg": "#ffffff",
+        "bg": "#3956df",
+        "ratio": 5.88
+      }
+    ],
+    "scope": "UI presentation only; does not prove all application accessibility"
+  },
+  "handlers": {
+    "handlersAndGuards": 15,
+    "unchanged": true
+  },
+  "backend_sql_simulator_diff": "none",
+  "limits": "Read-only visual/navigation smoke; no business submits or financial end-to-end; no full accessibility audit"
+}

@@ -287,3 +287,8 @@ Tidak commit/merge/push, tidak menjalankan migration, tidak menguji GPS fisik at
 ### 26 Oktober 2026 — hasil final restart GPS
 
 Restart final kedua proses14:47:23UTC+8; titik GPS baru14:47:36 dan titik lanjutan14:48:16 tersimpan di Supabase. Token acak persisten tidak berubah dalam siklus final; token salah401, backendReadytrue. Dua tes konfigurasiPASS, termasuk token kosong tidak membaca baris berikutnya. Pemeriksaan token aktual pada source/dokumen publik bersih dan .env tetap diabaikan Git. Bukti final menggantikan hasil sementara sebelum koreksi parser setup. Backend/simulator serta rental QA dibiarkan aktif; frontend tidak dinyalakan. Tidak ada SQL, commit, merge atau push. Handoff selesai: `.workflow/handoffs/2026-10-26-gps-persistence.txt`; Hindsight key `transrent-gps-final-restart-20261026-5fd0db5-r1` local_pending/401, accepted=false, processed/searchableunknown. Tunggu instruksi eksplisit sebelum pekerjaan berikutnya.
+
+
+### 26 Oktober 2026 — TypeUI polish MoU, transaksi, master dan navigasi
+
+UI diimplementasikan pada frontend App.jsx, BusinessPages.jsx dan styles.css; navy/biru dipertahankan, tanpa perubahan logika backend/API/SQL. Scope dan detail file: docs/UI_POLISH.md. Build PASS, tes sesi3/3, AST31kontrak API dan15handler/guard identik; 52pemeriksaan menu pada empat role/dua viewport ditambah320px untuk tiga menu utama. Bukti docs/verification/2026-10-26-ui-polish.json. Status implemented/visual-smoke-tested, tampilan diterima pemilik; commit/push feature-update diizinkan, deployment belum diverifikasi. Tidak submit bisnis, SQL, commit atau push. Hindsightacademic401: local_pending, accepted=false, processed/searchableunknown. Handoff .workflow/handoffs/2026-10-26-ui-polish.txt.
